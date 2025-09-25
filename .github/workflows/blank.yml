@@ -1,0 +1,231 @@
+name: Setup BeenCoin Project
+
+on:
+  workflow_dispatch:  # 수동 실행 가능
+  push:
+    branches: [ main ]
+
+jobs:
+  setup-project:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Create project structure
+      run: |
+        # 폴더 구조 생성
+        mkdir -p app/{core,api/v1/endpoints,models,services,utils} tests
+        mkdir -p .github/workflows
+        
+        # requirements.txt 생성
+        cat > requirements.txt << 'EOF'
+        fastapi==0.104.1
+        uvicorn==0.24.0
+        sqlalchemy==2.0.23
+        sqlmodel==0.0.11
+        pydantic==2.5.0
+        python-jose==3.3.0
+        passlib==1.7.4
+        python-multipart==0.0.6
+        httpx==0.25.2
+        websockets==12.0
+        redis==5.0.1
+        aioredis==2.0.1
+        pytest==7.4.3
+        pytest-asyncio==0.21.1
+        aiohttp==3.9.1
+        celery==5.3.4
+        python-binance==1.0.19
+        EOF
+        
+        # app/core/config.py 생성
+        mkdir -p app/core
+        cat > app/core/config.py << 'EOF'
+        from pydantic_settings import BaseSettings
+        from typing import Optional
+
+        class Settings(BaseSettings):
+            API_V1_STR: str = "/api/v1"
+            PROJECT_NAME: str = "BeenCoin API"
+            DATABASE_URL: str = "sqlite+aiosqlite:///./beencoin.db"
+            SECRET_KEY: str = "your-secret-key-change-in-production"
+            ALGORITHM: str = "HS256"
+            ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+            BINANCE_API_URL: str = "https://api.binance.com/api/v3"
+            REDIS_URL: str = "redis://localhost:6379"
+            INITIAL_BALANCE: float = 1000000
+
+            class Config:
+                case_sensitive = True
+
+        settings = Settings()
+        EOF
+        
+        # app/models/database.py 생성
+        mkdir -p app/models
+        cat > app/models/database.py << 'EOF'
+        from sqlmodel import SQLModel, Field, Relationship
+        from typing import Optional, List
+        from datetime import datetime
+        from decimal import Decimal
+
+        class User(SQLModel, table=True):
+            id: Optional[int] = Field(default=None, primary_key=True)
+            email: str = Field(unique=True, index=True)
+            hashed_password: str
+            created_at: datetime = Field(default_factory=datetime.utcnow)
+            accounts: List["TradingAccount"] = Relationship(back_populates="user")
+            orders: List["Order"] = Relationship(back_populates="user")
+
+        class TradingAccount(SQLModel, table=True):
+            id: Optional[int] = Field(default=None, primary_key=True)
+            user_id: int = Field(foreign_key="user.id")
+            balance: Decimal = Field(default=1000000, max_digits=20, decimal_places=8)
+            total_profit: Decimal = Field(default=0, max_digits=20, decimal_places=8)
+            user: User = Relationship(back_populates="accounts")
+            positions: List["Position"] = Relationship(back_populates="account")
+
+        class Order(SQLModel, table=True):
+            id: Optional[int] = Field(default=None, primary_key=True)
+            user_id: int = Field(foreign_key="user.id")
+            symbol: str
+            order_type: str
+            order_status: str = "pending"
+            price: Decimal = Field(max_digits=20, decimal_places=8)
+            quantity: Decimal = Field(max_digits=20, decimal_places=8)
+            filled_quantity: Decimal = Field(default=0, max_digits=20, decimal_places=8)
+            created_at: datetime = Field(default_factory=datetime.utcnow)
+            updated_at: datetime = Field(default_factory=datetime.utcnow)
+            user: User = Relationship(back_populates="orders")
+
+        class Position(SQLModel, table=True):
+            id: Optional[int] = Field(default=None, primary_key=True)
+            account_id: int = Field(foreign_key="tradingaccount.id")
+            symbol: str
+            quantity: Decimal = Field(max_digits=20, decimal_places=8)
+            average_price: Decimal = Field(max_digits=20, decimal_places=8)
+            current_value: Decimal = Field(max_digits=20, decimal_places=8)
+            account: TradingAccount = Relationship(back_populates="positions")
+
+        def create_db_and_tables(engine):
+            SQLModel.metadata.create_all(engine)
+        EOF
+        
+        # app/main.py 생성
+        mkdir -p app
+        cat > app/main.py << 'EOF'
+        from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
+        from app.core.config import settings
+
+        app = FastAPI(
+            title=settings.PROJECT_NAME,
+            openapi_url=f"{settings.API_V1_STR}/openapi.json"
+        )
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        @app.get("/")
+        async def root():
+            return {"message": "BeenCoin API 서버가 실행 중입니다!"}
+
+        @app.get("/health")
+        async def health_check():
+            return {"status": "healthy"}
+
+        if __name__ == "__main__":
+            import uvicorn
+            uvicorn.run(app, host="0.0.0.0", port=8000)
+        EOF
+        
+        # __init__.py 파일들 생성
+        touch app/__init__.py
+        touch app/core/__init__.py
+        touch app/api/__init__.py
+        touch app/api/v1/__init__.py
+        touch app/api/v1/endpoints/__init__.py
+        touch app/models/__init__.py
+        touch app/services/__init__.py
+        touch app/utils/__init__.py
+        
+        # README.md 생성
+        cat > README.md << 'EOF'
+        # BeenCoin - 실시간 암호화폐 모의투자 플랫폼
+
+        ## 🚀 주요 기능
+        - 실시간 암호화폐 시세 조회 (Binance API)
+        - 모의투자 주문 시스템
+        - WebSocket 실시간 데이터 스트리밍
+        - 포트폴리오 관리
+
+        ## ⚡ 빠른 시작
+        ```bash
+        pip install -r requirements.txt
+        uvicorn app.main:app --reload
+        ```
+
+        ## 📊 API 문서
+        - Swagger UI: http://localhost:8000/docs
+        - ReDoc: http://localhost:8000/redoc
+
+        ## 🏗️ 프로젝트 구조
+        ```
+        BeenCoin/
+        ├── app/
+        │   ├── main.py
+        │   ├── core/          # 설정 관리
+        │   ├── models/        # 데이터베이스 모델
+        │   ├── api/v1/        # API 엔드포인트
+        │   ├── services/      # 비즈니스 로직
+        │   └── utils/         # 유틸리티
+        ├── tests/
+        └── requirements.txt
+        ```
+        EOF
+        
+        # .gitignore 생성
+        cat > .gitignore << 'EOF'
+        __pycache__/
+        *.pyc
+        *.pyo
+        *.pyd
+        .Python
+        env/
+        venv/
+        .venv/
+        *.sqlite3
+        *.db
+        .DS_Store
+        .coverage
+        htmlcov/
+        .pytest_cache/
+        *.log
+        instance/
+        .webassets-cache
+        .scrapy
+        docs/_build/
+        target/
+        .ipynb_checkpoints
+        .python-version
+        .env
+        .venv
+        npm-debug.log*
+        yarn-debug.log*
+        yarn-error.log*
+        EOF
+
+    - name: Commit and push project files
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .
+        git commit -m "🚀 BeenCoin 프로젝트 초기 설정 완료" || echo "No changes to commit"
+        git push
