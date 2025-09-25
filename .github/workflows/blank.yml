@@ -1,4 +1,3 @@
-```yaml
 name: Setup BeenCoin Project
 
 on:
@@ -580,4 +579,3 @@ jobs:
         title: "BeenCoin 프로젝트 확장"
         body: "모의투자 기능 강화: 회원가입, 실제 시장 기반 주문 실행, 매수/매도 처리, 수익률 계산"
         branch: "auto-expand-branch"
-```
