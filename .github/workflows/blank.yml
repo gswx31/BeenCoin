@@ -1,3 +1,4 @@
+```yaml
 name: Setup BeenCoin Project
 
 on:
@@ -15,11 +16,11 @@ jobs:
       
     - name: Create project structure
       run: |
-        # 폴더 구조 생성 (기존 + 추가: routers, schemas)
+        # 폴더 구조 생성
         mkdir -p app/{core,api/v1/endpoints,models,services,utils,schemas,routers} tests
         mkdir -p .github/workflows
         
-        # requirements.txt 생성 (추가: bcrypt for password hashing, python-dotenv)
+        # requirements.txt 생성
         cat > requirements.txt << 'EOF'
         fastapi==0.104.1
         uvicorn==0.24.0
@@ -42,7 +43,7 @@ jobs:
         python-dotenv==1.0.0
         EOF
         
-        # .env.example 생성 (환경 변수 예시)
+        # .env.example 생성
         cat > .env.example << 'EOF'
         DATABASE_URL=sqlite+aiosqlite:///./beencoin.db
         SECRET_KEY=your-secret-key-change-in-production
@@ -50,7 +51,7 @@ jobs:
         BINANCE_API_SECRET=your-binance-api-secret
         EOF
         
-        # app/core/config.py 생성 (환경 변수 로드 추가)
+        # app/core/config.py 생성
         mkdir -p app/core
         cat > app/core/config.py << 'EOF'
         from pydantic_settings import BaseSettings
@@ -79,7 +80,7 @@ jobs:
         settings = Settings()
         EOF
         
-        # app/models/database.py 생성 (User 모델 수정: username 추가, email 대신 사용)
+        # app/models/database.py 생성
         mkdir -p app/models
         cat > app/models/database.py << 'EOF'
         from sqlmodel import SQLModel, Field, Relationship, create_engine
@@ -132,7 +133,7 @@ jobs:
             SQLModel.metadata.create_all(engine)
         EOF
         
-        # app/schemas/user.py 생성 (스키마: 회원가입/로그인용)
+        # app/schemas/user.py 생성
         mkdir -p app/schemas
         cat > app/schemas/user.py << 'EOF'
         from pydantic import BaseModel
@@ -150,7 +151,7 @@ jobs:
             username: str
         EOF
         
-        # app/schemas/order.py 생성 (주문 스키마)
+        # app/schemas/order.py 생성
         cat > app/schemas/order.py << 'EOF'
         from pydantic import BaseModel
         from decimal import Decimal
@@ -174,7 +175,7 @@ jobs:
             price: Optional[Decimal]
         EOF
         
-        # app/schemas/account.py 생성 (계좌/수익률 스키마)
+        # app/schemas/account.py 생성
         cat > app/schemas/account.py << 'EOF'
         from pydantic import BaseModel
         from decimal import Decimal
@@ -194,7 +195,7 @@ jobs:
             profit_rate: Decimal  # 수익률 (%)
         EOF
         
-        # app/utils/security.py 생성 (비밀번호 해싱, JWT)
+        # app/utils/security.py 생성
         mkdir -p app/utils
         cat > app/utils/security.py << 'EOF'
         from passlib.context import CryptContext
@@ -221,7 +222,7 @@ jobs:
             return encoded_jwt
         EOF
         
-        # app/services/binance_service.py 생성 (Binance API 연결 및 실시간 가격 확인)
+        # app/services/binance_service.py 생성
         mkdir -p app/services
         cat > app/services/binance_service.py << 'EOF'
         from binance.client import Client
@@ -229,14 +230,13 @@ jobs:
         import asyncio
         from binance import AsyncClient, BinanceSocketManager
 
-        client = Client(settings.BINANCE_API_KEY, settings.BINANCE_API_SECRET)
+        async_client = AsyncClient(settings.BINANCE_API_KEY, settings.BINANCE_API_SECRET)
 
         async def get_current_price(symbol: str) -> float:
             ticker = await async_client.get_symbol_ticker(symbol=symbol)
             return float(ticker['price'])
 
-        async def monitor_limit_order(order_id: int, symbol: str, side: str, price: float, quantity: float):
-            # WebSocket으로 실시간 가격 모니터링하여 가격 도달 시 주문 실행 시뮬레이션
+        async def monitor_limit_order(order_id: int, symbol: str, side: str, price: float, quantity: float, callback):
             async with BinanceSocketManager(async_client) as bsm:
                 ts = bsm.trade_socket(symbol)
                 async with ts as tscm:
@@ -244,23 +244,21 @@ jobs:
                         res = await tscm.recv()
                         current_price = float(res['p'])
                         if (side == 'buy' and current_price <= price) or (side == 'sell' and current_price >= price):
-                            # 주문 실행 로직 (DB 업데이트)
-                            # 여기서 Order 업데이트, Position 업데이트 등 호출
+                            await callback(order_id, quantity, current_price)
                             break
 
-        # 시장가 주문 즉시 실행
         def execute_market_order(symbol: str, side: str, quantity: float):
             price = client.get_symbol_ticker(symbol=symbol)['price']
-            # DB 업데이트 로직
-            return price
+            return float(price)
         EOF
         
-        # app/services/order_service.py 생성 (주문 처리 로직: 매수/매도, 수익률 계산)
+        # app/services/order_service.py 생성
         cat > app/services/order_service.py << 'EOF'
         from sqlmodel import Session, select
         from app.models.database import Order, Position, TradingAccount
         from app.services.binance_service import get_current_price, monitor_limit_order, execute_market_order
         from decimal import Decimal
+        import asyncio
 
         async def create_order(session: Session, user_id: int, order_data):
             order = Order(user_id=user_id, **order_data.dict())
@@ -270,10 +268,13 @@ jobs:
             
             if order.order_type == 'market':
                 price = execute_market_order(order.symbol, order.side, order.quantity)
-                update_order_filled(session, order.id, order.quantity, price)
-                update_position(session, user_id, order.symbol, order.side, order.quantity, price)
+                update_order_filled(session, order.id, order.quantity, Decimal(str(price)))
+                update_position(session, user_id, order.symbol, order.side, order.quantity, Decimal(str(price)))
             elif order.order_type == 'limit':
-                asyncio.create_task(monitor_limit_order(order.id, order.symbol, order.side, order.price, order.quantity))
+                async def callback(order_id, quantity, price):
+                    update_order_filled(session, order_id, Decimal(str(quantity)), Decimal(str(price)))
+                    update_position(session, user_id, order.symbol, order.side, Decimal(str(quantity)), Decimal(str(price)))
+                asyncio.create_task(monitor_limit_order(order.id, order.symbol, order.side, float(order.price), float(order.quantity), callback))
             
             return order
 
@@ -307,7 +308,7 @@ jobs:
                 account.total_profit += profit
                 account.balance += price * quantity
             
-            current_price = get_current_price(symbol)  # async await 필요
+            current_price = Decimal(str(asyncio.run(get_current_price(symbol))))
             position.current_value = position.quantity * current_price
             position.unrealized_profit = position.quantity * (current_price - position.average_price)
             session.add(position)
@@ -318,7 +319,7 @@ jobs:
             account = session.exec(select(TradingAccount).where(TradingAccount.user_id == user_id)).first()
             positions = session.exec(select(Position).where(Position.account_id == account.id)).all()
             total_value = account.balance + sum(p.current_value for p in positions)
-            initial_balance = Decimal(settings.INITIAL_BALANCE)
+            initial_balance = Decimal(str(settings.INITIAL_BALANCE))
             profit_rate = ((total_value - initial_balance) / initial_balance * 100) if initial_balance > 0 else 0
             return {
                 "balance": account.balance,
@@ -328,15 +329,15 @@ jobs:
             }
         EOF
         
-        # app/routers/auth.py 생성 (회원가입/로그인 엔드포인트)
+        # app/routers/auth.py 생성
         mkdir -p app/routers
         cat > app/routers/auth.py << 'EOF'
         from fastapi import APIRouter, Depends, HTTPException, status
         from sqlmodel import Session, select
-        from app.models.database import User
+        from app.models.database import User, TradingAccount
         from app.schemas.user import UserCreate, UserLogin, UserOut
         from app.utils.security import get_password_hash, verify_password, create_access_token
-        from app.core.database import get_session  # 아래에 추가할 database.py
+        from app.core.database import get_session
 
         router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -348,11 +349,11 @@ jobs:
             hashed_password = get_password_hash(user.password)
             db_user = User(username=user.username, hashed_password=hashed_password)
             session.add(db_user)
-            # 기본 TradingAccount 생성
+            session.commit()
+            session.refresh(db_user)
             account = TradingAccount(user_id=db_user.id)
             session.add(account)
             session.commit()
-            session.refresh(db_user)
             return db_user
 
         @router.post("/login")
@@ -364,7 +365,7 @@ jobs:
             return {"access_token": access_token, "token_type": "bearer"}
         EOF
         
-        # app/routers/orders.py 생성 (주문 엔드포인트)
+        # app/routers/orders.py 생성
         cat > app/routers/orders.py << 'EOF'
         from fastapi import APIRouter, Depends, HTTPException
         from sqlmodel import Session
@@ -374,9 +375,10 @@ jobs:
         from fastapi.security import OAuth2PasswordBearer
         from jose import jwt
         from app.core.config import settings
+        from app.models.database import User
 
         router = APIRouter(prefix="/orders", tags=["orders"])
-        oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+        oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
         async def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
             try:
@@ -396,13 +398,13 @@ jobs:
             return await create_order(session, current_user.id, order)
         EOF
         
-        # app/routers/account.py 생성 (계좌/수익률 조회 엔드포인트)
+        # app/routers/account.py 생성
         cat > app/routers/account.py << 'EOF'
         from fastapi import APIRouter, Depends
         from app.schemas.account import AccountOut
         from app.services.order_service import get_account_summary
         from app.core.database import get_session
-        from app.routers.auth import get_current_user  # auth.py에서 import
+        from app.routers.orders import get_current_user
 
         router = APIRouter(prefix="/account", tags=["account"])
 
@@ -412,7 +414,7 @@ jobs:
             return AccountOut(**summary)
         EOF
         
-        # app/core/database.py 생성 (DB 세션 관리)
+        # app/core/database.py 생성
         cat > app/core/database.py << 'EOF'
         from sqlmodel import create_engine, Session
         from app.core.config import settings
@@ -426,7 +428,7 @@ jobs:
                 yield session
         EOF
         
-        # app/main.py 생성 (라우터 추가, DB 초기화)
+        # app/main.py 생성
         mkdir -p app
         cat > app/main.py << 'EOF'
         from fastapi import FastAPI
@@ -469,7 +471,7 @@ jobs:
             uvicorn.run(app, host="0.0.0.0", port=8000)
         EOF
         
-        # __init__.py 파일들 생성 (추가 폴더 포함)
+        # __init__.py 파일들 생성
         touch app/__init__.py
         touch app/core/__init__.py
         touch app/api/__init__.py
@@ -481,11 +483,11 @@ jobs:
         touch app/schemas/__init__.py
         touch app/routers/__init__.py
         
-        # README.md 생성 (기능 추가 설명)
+        # README.md 생성
         cat > README.md << 'EOF'
         # BeenCoin - 실시간 암호화폐 모의투자 플랫폼
 
-        ##  주요 기능
+        ## 🚀 주요 기능
         - 회원가입/로그인 (아이디/비밀번호 기반)
         - 실시간 암호화폐 시세 조회 (Binance API)
         - 모의투자 주문 시스템 (시장가/지정가, 매수/매도)
@@ -493,8 +495,89 @@ jobs:
         - 포트폴리오 관리 및 수익률 표시
         - WebSocket 실시간 데이터 스트리밍
 
-        ##  빠른 시작
+        ## ⚡ 빠른 시작
         1. 환경 변수 설정: .env 파일 생성 (.env.example 참조)
         2. ```bash
            pip install -r requirements.txt
            uvicorn app.main:app --reload
+           ```
+
+        ## 📊 API 문서
+        - Swagger UI: http://localhost:8000/docs
+        - ReDoc: http://localhost:8000/redoc
+
+        ## 🏗️ 프로젝트 구조
+        ```
+        BeenCoin/
+        ├── app/
+        │   ├── main.py
+        │   ├── core/          # 설정 관리
+        │   ├── models/        # 데이터베이스 모델
+        │   ├── schemas/       # Pydantic 스키마
+        │   ├── routers/       # API 라우터
+        │   ├── services/      # 비즈니스 로직 (Binance, Order 처리)
+        │   ├── utils/         # 유틸리티 (보안 등)
+        │   ├── api/v1/        # API 엔드포인트 (미사용 시 삭제 가능)
+        │   └── __init__.py
+        ├── tests/
+        ├── .env.example
+        └── requirements.txt
+        ```
+
+        ## 📝 추가 설명
+        - 회원가입: POST /api/v1/auth/register {username, password}
+        - 로그인: POST /api/v1/auth/login {username, password} → JWT 토큰 반환
+        - 주문: POST /api/v1/orders {symbol, side, order_type, quantity, price?} (Authorization: Bearer <token>)
+        - 계좌 조회: GET /api/v1/account (Authorization: Bearer <token>) → balance, total_profit, positions, profit_rate
+        - 주문 처리: 시장가는 즉시 실행, 지정가는 WebSocket으로 가격 모니터링 후 실행.
+        - 수익률: (현재 총 가치 - 초기 잔고) / 초기 잔고 * 100
+        EOF
+        
+        # .gitignore 생성
+        cat > .gitignore << 'EOF'
+        __pycache__/
+        *.pyc
+        *.pyo
+        *.pyd
+        .Python
+        env/
+        venv/
+        .venv/
+        *.sqlite3
+        *.db
+        .DS_Store
+        .coverage
+        htmlcov/
+        .pytest_cache/
+        *.log
+        instance/
+        .webassets-cache
+        .scrapy
+        docs/_build/
+        target/
+        .ipynb_checkpoints
+        .python-version
+        .env
+        .venv
+        npm-debug.log*
+        yarn-debug.log*
+        yarn-error.log*
+        EOF
+
+    - name: Commit and push project files
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .
+        git commit --allow-empty -m "🚀 BeenCoin 프로젝트 확장: 모든 파일 생성 및 모의투자 기능 추가"
+        git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/gswx31/BeenCoin.git || echo "Push failed, creating PR instead"
+    
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "🚀 BeenCoin 프로젝트 확장: 모든 파일 생성 및 모의투자 기능 추가"
+        title: "BeenCoin 프로젝트 확장"
+        body: "모의투자 기능 강화: 회원가입, 실제 시장 기반 주문 실행, 매수/매도 처리, 수익률 계산"
+        branch: "auto-expand-branch"
+```
