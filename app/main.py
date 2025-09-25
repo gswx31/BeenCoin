@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.models.database import create_db_and_tables
+from app.routers import auth, orders, account
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -14,6 +16,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth.router, prefix=settings.API_V1_STR)
+app.include_router(orders.router, prefix=settings.API_V1_STR)
+app.include_router(account.router, prefix=settings.API_V1_STR)
+
+@app.on_event("startup")
+def startup_event():
+    create_db_and_tables()
 
 @app.get("/")
 async def root():
