@@ -17,8 +17,21 @@ jobs:
 
     - name: Create backend structure
       run: |
-        # 폴더 구조 생성
-        mkdir -p app/{core,api/v1/endpoints,models,services,utils,schemas,routers,background_tasks} tests/{unit,integration} .github/workflows
+        # 폴더 구조 생성 - 각 디렉토리를 개별적으로 생성
+        mkdir -p app
+        mkdir -p app/core
+        mkdir -p app/api
+        mkdir -p app/api/v1
+        mkdir -p app/api/v1/endpoints
+        mkdir -p app/models
+        mkdir -p app/services
+        mkdir -p app/utils
+        mkdir -p app/schemas
+        mkdir -p app/routers
+        mkdir -p app/background_tasks
+        mkdir -p tests/unit
+        mkdir -p tests/integration
+        mkdir -p .github/workflows
         
         # 디버깅: 작업 디렉토리 확인
         echo "Current directory: $(pwd)"
