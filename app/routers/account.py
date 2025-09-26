@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends
-from sqlmodel import Session
 from app.schemas.account import AccountOut
 from app.schemas.transaction import TransactionOut
 from app.services.order_service import get_account_summary, get_transaction_history

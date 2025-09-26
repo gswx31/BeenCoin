@@ -4,8 +4,8 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.models.database import create_db_and_tables
 from app.routers import auth, orders, account, websocket
-from app.api.v1.endpoints import auth as v1_auth, orders as v1_orders, account as v1_account
 from app.background_tasks.celery_app import celery_app
+from app.background_tasks.tasks import update_all_positions
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -20,10 +20,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# v1 라우터 등록
-app.include_router(v1_auth.router, prefix=settings.API_V1_STR)
-app.include_router(v1_orders.router, prefix=settings.API_V1_STR)
-app.include_router(v1_account.router, prefix=settings.API_V1_STR)
+app.include_router(auth.router, prefix=settings.API_V1_STR)
+app.include_router(orders.router, prefix=settings.API_V1_STR)
+app.include_router(account.router, prefix=settings.API_V1_STR)
 app.include_router(websocket.router, prefix=settings.API_V1_STR)
 
 app.mount("/static", StaticFiles(directory="client/build", html=True), name="static")
@@ -31,6 +30,12 @@ app.mount("/static", StaticFiles(directory="client/build", html=True), name="sta
 @app.on_event("startup")
 async def startup_event():
     create_db_and_tables()
+    celery_app.conf.beat_schedule = {
+        'update-positions-every-5-minutes': {
+            'task': 'app.background_tasks.tasks.update_all_positions',
+            'schedule': 300.0,
+        },
+    }
 
 @app.get("/")
 async def root():
