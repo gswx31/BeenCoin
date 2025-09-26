@@ -12,14 +12,20 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
+      with:
+        fetch-depth: 0  # 전체 히스토리 가져오기
+
     - name: Create project structure
       run: |
-        # 폴더 구조 생성 (추가: client for frontend, with React setup)
+        # 폴더 구조 생성
         mkdir -p app/{core,api/v1/endpoints,models,services,utils,schemas,routers,background_tasks} tests/{unit,integration} client/{src/components,public}
-        mkdir -p .github/workflowss
+        mkdir -p .github/workflows
         
-        # requirements.txt 생성 (추가: frontend build를 위한 node, but since it's Actions, we'll generate static files)
+        # 디버깅: 작업 디렉토리 확인
+        echo "Current directory: $(pwd)"
+        ls -la
+
+        # requirements.txt 생성
         cat > requirements.txt << 'EOF'
         fastapi==0.104.1
         uvicorn==0.24.0
@@ -44,7 +50,7 @@ jobs:
         faker==19.13.0
         EOF
         
-        # .env.example 생성 (기존 동일)
+        # .env.example 생성
         cat > .env.example << 'EOF'
         DATABASE_URL=sqlite+aiosqlite:///./beencoin.db
         SECRET_KEY=your-secret-key-change-in-production
@@ -55,7 +61,7 @@ jobs:
         CELERY_RESULT_BACKEND=redis://localhost:6379/0
         EOF
         
-        # app/core/config.py 생성 (기존 동일)
+        # app/core/config.py 생성
         mkdir -p app/core
         cat > app/core/config.py << 'EOF'
         from pydantic_settings import BaseSettings
@@ -79,7 +85,7 @@ jobs:
             CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
             CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
             INITIAL_BALANCE: float = 1000000.0
-            SUPPORTED_SYMBOLS: list = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]  # 지원 코인 제한
+            SUPPORTED_SYMBOLS: list = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
 
             class Config:
                 case_sensitive = True
@@ -87,7 +93,7 @@ jobs:
         settings = Settings()
         EOF
         
-        # app/models/database.py 생성 (기존 동일)
+        # app/models/database.py 생성
         mkdir -p app/models
         cat > app/models/database.py << 'EOF'
         from sqlmodel import SQLModel, Field, Relationship, create_engine
@@ -151,11 +157,11 @@ jobs:
             user: User = Relationship(back_populates="transactions")
 
         def create_db_and_tables():
-            engine = create_engine(settings.DATABASE_URL, echo=True)  # 디버깅용 echo
+            engine = create_engine(settings.DATABASE_URL, echo=True)
             SQLModel.metadata.create_all(engine)
         EOF
         
-        # app/schemas/user.py 생성 (기존 동일)
+        # app/schemas/user.py 생성
         mkdir -p app/schemas
         cat > app/schemas/user.py << 'EOF'
         from pydantic import BaseModel, validator
@@ -181,7 +187,7 @@ jobs:
             created_at: str
         EOF
         
-        # app/schemas/order.py 생성 (기존 동일)
+        # app/schemas/order.py 생성
         cat > app/schemas/order.py << 'EOF'
         from pydantic import BaseModel, validator
         from decimal import Decimal
@@ -190,8 +196,8 @@ jobs:
 
         class OrderCreate(BaseModel):
             symbol: str
-            side: str  # 'BUY' or 'SELL'
-            order_type: str  # 'MARKET' or 'LIMIT'
+            side: str
+            order_type: str
             quantity: Decimal
             price: Optional[Decimal] = None
 
@@ -229,7 +235,7 @@ jobs:
             updated_at: str
         EOF
         
-        # app/schemas/account.py 생성 (기존 동일)
+        # app/schemas/account.py 생성
         cat > app/schemas/account.py << 'EOF'
         from pydantic import BaseModel
         from decimal import Decimal
@@ -250,7 +256,7 @@ jobs:
             total_value: Decimal
         EOF
         
-        # app/schemas/transaction.py 생성 (기존 동일)
+        # app/schemas/transaction.py 생성
         cat > app/schemas/transaction.py << 'EOF'
         from pydantic import BaseModel
         from decimal import Decimal
@@ -265,7 +271,7 @@ jobs:
             timestamp: str
         EOF
         
-        # app/utils/security.py 생성 (기존 동일)
+        # app/utils/security.py 생성
         mkdir -p app/utils
         cat > app/utils/security.py << 'EOF'
         from passlib.context import CryptContext
@@ -299,7 +305,7 @@ jobs:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         EOF
         
-        # app/services/binance_service.py 생성 (기존 동일)
+        # app/services/binance_service.py 생성
         mkdir -p app/services
         cat > app/services/binance_service.py << 'EOF'
         from binance.client import AsyncClient, BinanceSocketManager
@@ -331,15 +337,14 @@ jobs:
                                 await callback(order_id, quantity, current_price)
                                 break
             except Exception as e:
-                print(f"WebSocket error for order {order_id}: {str(e)}")  # 로깅
+                print(f"WebSocket error for order {order_id}: {str(e)}")
 
         async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Decimal:
             price = await get_current_price(symbol)
-            # 실제 Binance 주문 대신 모의 (모의 투자이므로)
             return price
         EOF
         
-        # app/services/order_service.py 생성 (기존 동일)
+        # app/services/order_service.py 생성
         cat > app/services/order_service.py << 'EOF'
         from sqlmodel import Session, select
         from app.models.database import Order, Position, TradingAccount, TransactionHistory
@@ -349,7 +354,7 @@ jobs:
         from app.schemas.order import OrderCreate
         from fastapi import HTTPException
 
-        FEE_RATE = Decimal('0.001')  # 0.1% 수수료
+        FEE_RATE = Decimal('0.001')
 
         async def create_order(session: Session, user_id: int, order_data: OrderCreate) -> Order:
             if order_data.symbol not in settings.SUPPORTED_SYMBOLS:
@@ -456,7 +461,7 @@ jobs:
             return session.exec(select(TransactionHistory).where(TransactionHistory.user_id == user_id).order_by(TransactionHistory.timestamp.desc())).all()
         EOF
         
-        # app/routers/auth.py 생성 (기존 동일)
+        # app/routers/auth.py 생성
         mkdir -p app/routers
         cat > app/routers/auth.py << 'EOF'
         from fastapi import APIRouter, Depends, HTTPException, status
@@ -478,7 +483,6 @@ jobs:
             session.add(db_user)
             session.commit()
             session.refresh(db_user)
-            # 기본 계좌 생성
             existing_account = session.exec(select(TradingAccount).where(TradingAccount.user_id == db_user.id)).first()
             if not existing_account:
                 account = TradingAccount(user_id=db_user.id, balance=Decimal(str(settings.INITIAL_BALANCE)))
@@ -497,7 +501,7 @@ jobs:
             return {"access_token": access_token, "token_type": "bearer"}
         EOF
         
-        # app/routers/orders.py 생성 (기존 동일)
+        # app/routers/orders.py 생성
         cat > app/routers/orders.py << 'EOF'
         from fastapi import APIRouter, Depends
         from sqlmodel import Session
@@ -534,7 +538,7 @@ jobs:
             return [OrderOut(**o.dict(), created_at=str(o.created_at), updated_at=str(o.updated_at)) for o in orders]
         EOF
         
-        # app/routers/account.py 생성 (기존 동일)
+        # app/routers/account.py 생성
         cat > app/routers/account.py << 'EOF'
         from fastapi import APIRouter, Depends
         from app.schemas.account import AccountOut
@@ -557,7 +561,7 @@ jobs:
             return [TransactionOut(**t.dict(), timestamp=str(t.timestamp)) for t in transactions]
         EOF
         
-        # app/routers/websocket.py 생성 (기존 동일)
+        # app/routers/websocket.py 생성
         cat > app/routers/websocket.py << 'EOF'
         from fastapi import APIRouter, WebSocket, Depends
         from app.services.binance_service import async_client
@@ -584,7 +588,7 @@ jobs:
                             break
         EOF
         
-        # app/background_tasks/celery_app.py 생성 (기존 동일, but optional in README)
+        # app/background_tasks/celery_app.py 생성
         mkdir -p app/background_tasks
         cat > app/background_tasks/celery_app.py << 'EOF'
         from celery import Celery
@@ -606,7 +610,7 @@ jobs:
         )
         EOF
         
-        # app/background_tasks/tasks.py 생성 (기존 동일)
+        # app/background_tasks/tasks.py 생성
         cat > app/background_tasks/tasks.py << 'EOF'
         from app.background_tasks.celery_app import celery_app
         from app.services.order_service import update_position
@@ -631,7 +635,7 @@ jobs:
                 session.commit()
         EOF
         
-        # app/core/database.py 생성 (기존 동일)
+        # app/core/database.py 생성
         cat > app/core/database.py << 'EOF'
         from sqlmodel import create_engine, Session
         from app.core.config import settings
@@ -643,7 +647,7 @@ jobs:
                 yield session
         EOF
         
-        # app/main.py 생성 (추가: static files for frontend)
+        # app/main.py 생성
         mkdir -p app
         cat > app/main.py << 'EOF'
         from fastapi import FastAPI
@@ -673,17 +677,15 @@ jobs:
         app.include_router(account.router, prefix=settings.API_V1_STR)
         app.include_router(websocket.router, prefix=settings.API_V1_STR)
 
-        # Mount frontend static files
         app.mount("/", StaticFiles(directory="client/build", html=True), name="static")
 
         @app.on_event("startup")
         async def startup_event():
             create_db_and_tables()
-            # Celery beat 스케줄 (매 5분 position 업데이트) - optional
             celery_app.conf.beat_schedule = {
                 'update-positions-every-5-minutes': {
                     'task': 'app.background_tasks.tasks.update_all_positions',
-                    'schedule': 300.0,  # 5 minutes
+                    'schedule': 300.0,
                 },
             }
 
@@ -700,7 +702,7 @@ jobs:
             uvicorn.run(app, host="0.0.0.0", port=8000)
         EOF
         
-        # tests/unit/test_order_service.py 생성 (기존 동일)
+        # tests/unit/test_order_service.py 생성
         mkdir -p tests/unit
         cat > tests/unit/test_order_service.py << 'EOF'
         import pytest
@@ -725,12 +727,11 @@ jobs:
             update_position(session, 1, "BTCUSDT", "BUY", Decimal('1'), Decimal('50000'), Decimal('50'))
             position = session.exec(Position.select().where(Position.symbol == "BTCUSDT")).first()
             assert position.quantity == Decimal('1')
-            assert account.balance == Decimal('999950')  # 50000 - 50 fee? Wait, fee is added to cost
+            assert account.balance == Decimal('999950')
 
-        # 추가 테스트 케이스 작성
         EOF
         
-        # Frontend setup: Create a simple React app in client/
+        # Frontend setup: React with Tailwind CSS
         cd client
         cat > package.json << 'EOF'
         {
@@ -746,7 +747,8 @@ jobs:
             "axios": "^1.7.7",
             "react-router-dom": "^6.27.0",
             "react-toastify": "^10.0.5",
-            "recharts": "^2.12.7"
+            "recharts": "^2.12.7",
+            "tailwindcss": "^3.4.10"
           },
           "scripts": {
             "start": "react-scripts start",
@@ -768,6 +770,40 @@ jobs:
         }
         EOF
         
+        cat > tailwind.config.js << 'EOF'
+        module.exports = {
+          content: [
+            "./src/**/*.{js,jsx,ts,tsx}",
+          ],
+          theme: {
+            extend: {
+              colors: {
+                primary: '#1a202c',
+                secondary: '#2d3748',
+                accent: '#4fd1c5',
+              },
+            },
+          },
+          plugins: [],
+        }
+        EOF
+        
+        cat > src/index.css << 'EOF'
+        @tailwind base;
+        @tailwind components;
+        @tailwind utilities;
+
+        body {
+          margin: 0;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+            'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+            sans-serif;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+          background-color: #f7fafc;
+        }
+        EOF
+        
         cat > public/index.html << 'EOF'
         <!DOCTYPE html>
         <html lang="en">
@@ -776,10 +812,7 @@ jobs:
             <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
             <meta name="viewport" content="width=device-width, initial-scale=1" />
             <meta name="theme-color" content="#000000" />
-            <meta
-              name="description"
-              content="BeenCoin 모의투자 플랫폼"
-            />
+            <meta name="description" content="BeenCoin 모의투자 플랫폼" />
             <title>BeenCoin</title>
           </head>
           <body>
@@ -800,11 +833,12 @@ jobs:
         import OrderForm from './components/OrderForm';
         import { ToastContainer } from 'react-toastify';
         import 'react-toastify/dist/ReactToastify.css';
+        import './index.css';
 
         function App() {
           return (
             <Router>
-              <div className="App">
+              <div className="min-h-screen bg-gray-100">
                 <Routes>
                   <Route path="/login" element={<Login />} />
                   <Route path="/register" element={<Register />} />
@@ -846,26 +880,30 @@ jobs:
           };
 
           return (
-            <div style={{ maxWidth: '400px', margin: 'auto', padding: '20px' }}>
-              <h2>로그인</h2>
-              <form onSubmit={handleSubmit}>
+            <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-xl">
+              <h2 className="text-2xl font-bold mb-4 text-center">로그인</h2>
+              <form onSubmit={handleSubmit} className="space-y-4">
                 <input
                   type="text"
                   placeholder="아이디"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="password"
                   placeholder="비밀번호"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
                 />
-                <button type="submit" style={{ width: '100%' }}>로그인</button>
+                <button type="submit" className="w-full p-2 bg-accent text-white rounded hover:bg-teal-600">
+                  로그인
+                </button>
               </form>
-              <p>계정이 없으신가요? <a href="/register">회원가입</a></p>
+              <p className="mt-4 text-center">
+                계정이 없으신가요? <a href="/register" className="text-accent hover:underline">회원가입</a>
+              </p>
             </div>
           );
         };
@@ -896,26 +934,30 @@ jobs:
           };
 
           return (
-            <div style={{ maxWidth: '400px', margin: 'auto', padding: '20px' }}>
-              <h2>회원가입</h2>
-              <form onSubmit={handleSubmit}>
+            <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-xl">
+              <h2 className="text-2xl font-bold mb-4 text-center">회원가입</h2>
+              <form onSubmit={handleSubmit} className="space-y-4">
                 <input
                   type="text"
                   placeholder="아이디"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="password"
                   placeholder="비밀번호"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
                 />
-                <button type="submit" style={{ width: '100%' }}>가입하기</button>
+                <button type="submit" className="w-full p-2 bg-accent text-white rounded hover:bg-teal-600">
+                  가입하기
+                </button>
               </form>
-              <p>이미 계정이 있으신가요? <a href="/login">로그인</a></p>
+              <p className="mt-4 text-center">
+                이미 계정이 있으신가요? <a href="/login" className="text-accent hover:underline">로그인</a>
+              </p>
             </div>
           );
         };
@@ -977,7 +1019,7 @@ jobs:
                   datasets: [{
                     label: 'BTCUSDT Price',
                     data: newData.slice(-20),
-                    borderColor: 'rgb(75, 192, 192)',
+                    borderColor: '#4fd1c5',
                     tension: 0.1
                   }]
                 };
@@ -988,17 +1030,35 @@ jobs:
             return () => ws.close();
           }, [token]);
 
-          if (!account) return <div>로딩 중...</div>;
+          if (!account) return <div className="text-center mt-10">로딩 중...</div>;
 
           return (
-            <div style={{ padding: '20px' }}>
-              <h2>대시보드</h2>
-              <p>잔고: {account.balance}</p>
-              <p>총 수익: {account.total_profit}</p>
-              <p>수익률: {account.profit_rate}%</p>
-              <h3>실시간 BTCUSDT 가격 차트</h3>
-              <Line data={priceData} />
-              <a href="/portfolio">포트폴리오 보기</a> | <a href="/order">주문 하기</a>
+            <div className="max-w-4xl mx-auto mt-10 p-6 bg-white rounded-lg shadow-xl">
+              <h2 className="text-2xl font-bold mb-4">대시보드</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="p-4 bg-gray-100 rounded">
+                  <p className="text-sm text-gray-600">잔고</p>
+                  <p className="text-lg font-semibold">${account.balance.toFixed(2)}</p>
+                </div>
+                <div className="p-4 bg-gray-100 rounded">
+                  <p className="text-sm text-gray-600">총 수익</p>
+                  <p className="text-lg font-semibold ${account.total_profit > 0 ? 'text-green-600' : 'text-red-600'}">
+                    ${account.total_profit.toFixed(2)}
+                  </p>
+                </div>
+                <div className="p-4 bg-gray-100 rounded">
+                  <p className="text-sm text-gray-600">수익률</p>
+                  <p className="text-lg font-semibold">${account.profit_rate.toFixed(2)}%</p>
+                </div>
+              </div>
+              <h3 className="text-xl font-semibold mb-2">실시간 BTCUSDT 가격 차트</h3>
+              <div className="bg-gray-50 p-4 rounded">
+                <Line data={priceData} />
+              </div>
+              <div className="mt-4 flex space-x-4">
+                <a href="/portfolio" className="text-accent hover:underline">포트폴리오 보기</a>
+                <a href="/order" className="text-accent hover:underline">주문 하기</a>
+              </div>
             </div>
           );
         };
@@ -1030,31 +1090,35 @@ jobs:
           }, [token]);
 
           return (
-            <div style={{ padding: '20px' }}>
-              <h2>포트폴리오</h2>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th>심볼</th>
-                    <th>수량</th>
-                    <th>평균 가격</th>
-                    <th>현재 가치</th>
-                    <th>미실현 수익</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map((pos, index) => (
-                    <tr key={index} style={{ borderBottom: '1px solid #ddd' }}>
-                      <td>{pos.symbol}</td>
-                      <td>{pos.quantity}</td>
-                      <td>{pos.average_price}</td>
-                      <td>{pos.current_value}</td>
-                      <td style={{ color: pos.unrealized_profit > 0 ? 'green' : 'red' }}>{pos.unrealized_profit}</td>
+            <div className="max-w-4xl mx-auto mt-10 p-6 bg-white rounded-lg shadow-xl">
+              <h2 className="text-2xl font-bold mb-4">포트폴리오</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="p-2 text-left">심볼</th>
+                      <th className="p-2 text-left">수량</th>
+                      <th className="p-2 text-left">평균 가격</th>
+                      <th className="p-2 text-left">현재 가치</th>
+                      <th className="p-2 text-left">미실현 수익</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              <a href="/dashboard">대시보드로 돌아가기</a>
+                  </thead>
+                  <tbody>
+                    {positions.map((pos, index) => (
+                      <tr key={index} className="border-b">
+                        <td className="p-2">{pos.symbol}</td>
+                        <td className="p-2">{pos.quantity}</td>
+                        <td className="p-2">${pos.average_price.toFixed(2)}</td>
+                        <td className="p-2">${pos.current_value.toFixed(2)}</td>
+                        <td className={`p-2 ${pos.unrealized_profit > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          ${pos.unrealized_profit.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <a href="/dashboard" className="mt-4 inline-block text-accent hover:underline">대시보드로 돌아가기</a>
             </div>
           );
         };
@@ -1097,19 +1161,31 @@ jobs:
           };
 
           return (
-            <div style={{ maxWidth: '400px', margin: 'auto', padding: '20px' }}>
-              <h2>주문 하기</h2>
-              <form onSubmit={handleSubmit}>
-                <select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ display: 'block', margin: '10px 0', width: '100%' }}>
+            <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-xl">
+              <h2 className="text-2xl font-bold mb-4">주문 하기</h2>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <select
+                  value={symbol}
+                  onChange={(e) => setSymbol(e.target.value)}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
+                >
                   <option>BTCUSDT</option>
                   <option>ETHUSDT</option>
                   <option>BNBUSDT</option>
                 </select>
-                <select value={side} onChange={(e) => setSide(e.target.value)} style={{ display: 'block', margin: '10px 0', width: '100%' }}>
+                <select
+                  value={side}
+                  onChange={(e) => setSide(e.target.value)}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
+                >
                   <option>BUY</option>
                   <option>SELL</option>
                 </select>
-                <select value={orderType} onChange={(e) => setOrderType(e.target.value)} style={{ display: 'block', margin: '10px 0', width: '100%' }}>
+                <select
+                  value={orderType}
+                  onChange={(e) => setOrderType(e.target.value)}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
+                >
                   <option>MARKET</option>
                   <option>LIMIT</option>
                 </select>
@@ -1118,7 +1194,7 @@ jobs:
                   placeholder="수량"
                   value={quantity}
                   onChange={(e) => setQuantity(e.target.value)}
-                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                  className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 {orderType === 'LIMIT' && (
                   <input
@@ -1126,12 +1202,14 @@ jobs:
                     placeholder="가격"
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
-                    style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                    className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-accent"
                   />
                 )}
-                <button type="submit" style={{ width: '100%' }}>주문 제출</button>
+                <button type="submit" className="w-full p-2 bg-accent text-white rounded hover:bg-teal-600">
+                  주문 제출
+                </button>
               </form>
-              <a href="/dashboard">대시보드로 돌아가기</a>
+              <a href="/dashboard" className="mt-4 inline-block text-accent hover:underline">대시보드로 돌아가기</a>
             </div>
           );
         };
@@ -1143,6 +1221,7 @@ jobs:
         import React from 'react';
         import ReactDOM from 'react-dom/client';
         import App from './App';
+        import './index.css';
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(
@@ -1152,28 +1231,32 @@ jobs:
         );
         EOF
         
-        # Note: In production, build the frontend with 'npm run build' and serve from client/build
-        
-        # README.md 생성 (UI/UX 보완 설명 추가, Celery optional, uvicorn only for basic run)
-        cat > README.md << 'EOF'
-        # BeenCoin - 실시간 암호화폐 모의투자 플랫폼
+        # 디버깅: 생성된 파일 확인
+        echo "Files created:"
+        find . -type f
 
-        ## 🚀 주요 기능
-        - 안전한 회원가입/로그인 (JWT 인증, 비밀번호 해싱)
-        - 지원 코인: BTCUSDT, ETHUSDT, BNBUSDT
-        - 주문 시스템: 시장가/지정가, 매수/매도 (Binance 실시간 데이터 기반)
-        - 지정가 주문: WebSocket 모니터링으로 가격 도달 시 자동 실행
-        - 포트폴리오 관리: 포지션, 미실현 수익, 총 수익률 계산
-        - 거래 내역 조회 및 수수료 적용 (0.1%)
-        - 실시간 가격 스트리밍 (WebSocket /ws/prices/{symbol})
-        - 배경 작업: Celery + Redis로 주기적 포지션 업데이트 (매 5분, optional)
-        - 테스트 코드: pytest 기반 unit tests
-        - 프론트엔드 UI/UX: React 기반, 모바일 반응형 대시보드, 차트 (Chart.js), 주문 폼, 포트폴리오 테이블
-        - UI/UX 베스트 프랙티스: 간단한 네비게이션, 데이터 시각화, 토스트 알림, 반응형 디자인
+        # Note: In production, run 'cd client && npm install && npm run build' to generate client/build
+        # For GitHub Actions, we'll commit source files only
 
-        ## ⚡ 빠른 시작
-        1. .env 파일 생성 (.env.example 참조, Binance API 키 필수)
-        2. 백엔드 실행 (기본 기능만):
-           ```bash
-           pip install -r requirements.txt
-           uvicorn app.main:app --reload
+    - name: Commit changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .
+        git commit -m "🚀 BeenCoin 프로젝트 UI/UX 보완: React + Tailwind CSS 추가" --allow-empty || echo "No changes to commit"
+
+    - name: Push to new branch
+      run: |
+        git checkout -b auto-ui-ux-branch-$(date +%s)  # 고유 브랜치 이름
+        git push origin auto-ui-ux-branch-$(date +%s) --force-with-lease
+
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "🚀 BeenCoin 프로젝트 UI/UX 보완: React + Tailwind CSS 추가"
+        title: "BeenCoin UI/UX 보완"
+        body: "React 프론트엔드에 Tailwind CSS 추가, 디버깅 로그 추가, Celery optional, __init__.py 생략"
+        branch: "auto-ui-ux-branch-$(date +%s)"
+        base: "main"
+        delete-branch: true
