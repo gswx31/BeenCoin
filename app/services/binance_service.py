@@ -1,13 +1,9 @@
-# app/services/binance_service.py - 개선된 버전
-from binance.client import AsyncClient
+from binance.client import AsyncClient, BinanceSocketManager
 from app.core.config import settings
 from fastapi import HTTPException
 import asyncio
-from typing import Callable, Dict, List
+from typing import Callable
 from decimal import Decimal
-import aiohttp
-import json
-from datetime import datetime, timedelta
 
 async_client = AsyncClient(settings.BINANCE_API_KEY, settings.BINANCE_API_SECRET)
 
@@ -18,50 +14,22 @@ async def get_current_price(symbol: str) -> Decimal:
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Binance API error: {str(e)}")
 
-async def get_multiple_prices(symbols: List[str]) -> Dict[str, Decimal]:
-    """여러 코인의 현재 가격을 한번에 조회"""
-    prices = {}
-    for symbol in symbols:
-        try:
-            price = await get_current_price(symbol)
-            prices[symbol] = float(price)
-        except:
-            prices[symbol] = 0.0
-    return prices
-
-async def get_historical_data(symbol: str, interval: str = "1h", limit: int = 24):
-    """과거 차트 데이터 조회"""
+async def monitor_limit_order(order_id: int, symbol: str, side: str, price: Decimal, quantity: Decimal, callback: Callable):
     try:
-        klines = await async_client.get_klines(
-            symbol=symbol,
-            interval=interval,
-            limit=limit
-        )
-        
-        historical_data = []
-        for kline in klines:
-            historical_data.append({
-                "time": kline[0] / 1000,  # Unix timestamp
-                "open": float(kline[1]),
-                "high": float(kline[2]), 
-                "low": float(kline[3]),
-                "close": float(kline[4]),
-                "volume": float(kline[5])
-            })
-        return historical_data
+        async with BinanceSocketManager(async_client) as bsm:
+            ts = bsm.trade_socket(symbol)
+            async with ts as tscm:
+                while True:
+                    res = await tscm.recv()
+                    if 'p' not in res:
+                        continue
+                    current_price = Decimal(res['p'])
+                    if (side == 'BUY' and current_price <= price) or (side == 'SELL' and current_price >= price):
+                        await callback(order_id, quantity, current_price)
+                        break
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Historical data error: {str(e)}")
+        print(f"WebSocket error for order {order_id}: {str(e)}")
 
-async def get_24h_ticker(symbol: str):
-    """24시간 티커 정보"""
-    try:
-        ticker = await async_client.get_24hr_ticker(symbol=symbol)
-        return {
-            "symbol": symbol,
-            "priceChange": float(ticker['priceChange']),
-            "priceChangePercent": float(ticker['priceChangePercent']),
-            "volume": float(ticker['volume']),
-            "quoteVolume": float(ticker['quoteVolume']),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Decimal:
+    price = await get_current_price(symbol)
+    return price
