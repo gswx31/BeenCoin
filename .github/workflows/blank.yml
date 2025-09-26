@@ -17,7 +17,7 @@ jobs:
       run: |
         # 폴더 구조 생성 (추가: client for frontend, with React setup)
         mkdir -p app/{core,api/v1/endpoints,models,services,utils,schemas,routers,background_tasks} tests/{unit,integration} client/{src/components,public}
-        mkdir -p .github/workflows
+        mkdir -p .github/workflowss
         
         # requirements.txt 생성 (추가: frontend build를 위한 node, but since it's Actions, we'll generate static files)
         cat > requirements.txt << 'EOF'
