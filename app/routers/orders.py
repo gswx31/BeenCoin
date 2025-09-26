@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlmodel import Session
+from sqlmodel import Session, select
 from app.schemas.order import OrderCreate, OrderOut
 from app.services.order_service import create_order, get_user_orders
 from app.core.database import get_session

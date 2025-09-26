@@ -1,6 +1,7 @@
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
+from typing import Optional
 from fastapi import HTTPException, status
 from app.core.config import settings
 
