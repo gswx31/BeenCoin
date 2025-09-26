@@ -468,20 +468,7 @@ jobs:
         if __name__ == "__main__":
             import uvicorn
             uvicorn.run(app, host="0.0.0.0", port=8000)
-        EOF
-        
-        # __init__.py 파일들 생성
-        touch app/__init__.py
-        touch app/core/__init__.py
-        touch app/api/__init__.py
-        touch app/api/v1/__init__.py
-        touch app/api/v1/endpoints/__init__.py
-        touch app/models/__init__.py
-        touch app/services/__init__.py
-        touch app/utils/__init__.py
-        touch app/schemas/__init__.py
-        touch app/routers/__init__.py
-        
+        EOF        
         # README.md 생성
         cat > README.md << 'EOF'
         # BeenCoin - 실시간 암호화폐 모의투자 플랫폼
