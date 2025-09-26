@@ -3,6 +3,7 @@ from app.core.config import settings
 from fastapi import HTTPException
 import asyncio
 from typing import Callable
+from decimal import Decimal
 
 async_client = AsyncClient(settings.BINANCE_API_KEY, settings.BINANCE_API_SECRET)
 
