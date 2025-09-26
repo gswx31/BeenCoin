@@ -15,11 +15,11 @@ jobs:
       
     - name: Create project structure
       run: |
-        # 폴더 구조 생성 (추가: background_tasks, tests/unit)
-        mkdir -p app/{core,api/v1/endpoints,models,services,utils,schemas,routers,background_tasks} tests/{unit,integration}
+        # 폴더 구조 생성 (추가: client for frontend, with React setup)
+        mkdir -p app/{core,api/v1/endpoints,models,services,utils,schemas,routers,background_tasks} tests/{unit,integration} client/{src/components,public}
         mkdir -p .github/workflows
         
-        # requirements.txt 생성 (추가: flower for Celery monitoring, faker for tests)
+        # requirements.txt 생성 (추가: frontend build를 위한 node, but since it's Actions, we'll generate static files)
         cat > requirements.txt << 'EOF'
         fastapi==0.104.1
         uvicorn==0.24.0
@@ -44,7 +44,7 @@ jobs:
         faker==19.13.0
         EOF
         
-        # .env.example 생성 (추가: CELERY 관련)
+        # .env.example 생성 (기존 동일)
         cat > .env.example << 'EOF'
         DATABASE_URL=sqlite+aiosqlite:///./beencoin.db
         SECRET_KEY=your-secret-key-change-in-production
@@ -55,7 +55,7 @@ jobs:
         CELERY_RESULT_BACKEND=redis://localhost:6379/0
         EOF
         
-        # app/core/config.py 생성
+        # app/core/config.py 생성 (기존 동일)
         mkdir -p app/core
         cat > app/core/config.py << 'EOF'
         from pydantic_settings import BaseSettings
@@ -87,7 +87,7 @@ jobs:
         settings = Settings()
         EOF
         
-        # app/models/database.py 생성 (추가: TransactionHistory 모델)
+        # app/models/database.py 생성 (기존 동일)
         mkdir -p app/models
         cat > app/models/database.py << 'EOF'
         from sqlmodel import SQLModel, Field, Relationship, create_engine
@@ -155,7 +155,7 @@ jobs:
             SQLModel.metadata.create_all(engine)
         EOF
         
-        # app/schemas/user.py 생성
+        # app/schemas/user.py 생성 (기존 동일)
         mkdir -p app/schemas
         cat > app/schemas/user.py << 'EOF'
         from pydantic import BaseModel, validator
@@ -181,7 +181,7 @@ jobs:
             created_at: str
         EOF
         
-        # app/schemas/order.py 생성 (추가: validation)
+        # app/schemas/order.py 생성 (기존 동일)
         cat > app/schemas/order.py << 'EOF'
         from pydantic import BaseModel, validator
         from decimal import Decimal
@@ -229,7 +229,7 @@ jobs:
             updated_at: str
         EOF
         
-        # app/schemas/account.py 생성
+        # app/schemas/account.py 생성 (기존 동일)
         cat > app/schemas/account.py << 'EOF'
         from pydantic import BaseModel
         from decimal import Decimal
@@ -250,7 +250,7 @@ jobs:
             total_value: Decimal
         EOF
         
-        # app/schemas/transaction.py 생성 (새로 추가)
+        # app/schemas/transaction.py 생성 (기존 동일)
         cat > app/schemas/transaction.py << 'EOF'
         from pydantic import BaseModel
         from decimal import Decimal
@@ -265,7 +265,7 @@ jobs:
             timestamp: str
         EOF
         
-        # app/utils/security.py 생성 (추가: token validation 강화)
+        # app/utils/security.py 생성 (기존 동일)
         mkdir -p app/utils
         cat > app/utils/security.py << 'EOF'
         from passlib.context import CryptContext
@@ -299,7 +299,7 @@ jobs:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         EOF
         
-        # app/services/binance_service.py 생성 (개선: 에러 핸들링, async 강화)
+        # app/services/binance_service.py 생성 (기존 동일)
         mkdir -p app/services
         cat > app/services/binance_service.py << 'EOF'
         from binance.client import AsyncClient, BinanceSocketManager
@@ -339,7 +339,7 @@ jobs:
             return price
         EOF
         
-        # app/services/order_service.py 생성 (개선: 트랜잭션, fee 계산, history 기록)
+        # app/services/order_service.py 생성 (기존 동일)
         cat > app/services/order_service.py << 'EOF'
         from sqlmodel import Session, select
         from app.models.database import Order, Position, TradingAccount, TransactionHistory
@@ -456,7 +456,7 @@ jobs:
             return session.exec(select(TransactionHistory).where(TransactionHistory.user_id == user_id).order_by(TransactionHistory.timestamp.desc())).all()
         EOF
         
-        # app/routers/auth.py 생성 (개선: account 자동 생성 확인)
+        # app/routers/auth.py 생성 (기존 동일)
         mkdir -p app/routers
         cat > app/routers/auth.py << 'EOF'
         from fastapi import APIRouter, Depends, HTTPException, status
@@ -497,7 +497,7 @@ jobs:
             return {"access_token": access_token, "token_type": "bearer"}
         EOF
         
-        # app/routers/orders.py 생성 (추가: 주문 목록 조회)
+        # app/routers/orders.py 생성 (기존 동일)
         cat > app/routers/orders.py << 'EOF'
         from fastapi import APIRouter, Depends
         from sqlmodel import Session
@@ -534,7 +534,7 @@ jobs:
             return [OrderOut(**o.dict(), created_at=str(o.created_at), updated_at=str(o.updated_at)) for o in orders]
         EOF
         
-        # app/routers/account.py 생성 (추가: transaction history 조회)
+        # app/routers/account.py 생성 (기존 동일)
         cat > app/routers/account.py << 'EOF'
         from fastapi import APIRouter, Depends
         from app.schemas.account import AccountOut
@@ -557,7 +557,7 @@ jobs:
             return [TransactionOut(**t.dict(), timestamp=str(t.timestamp)) for t in transactions]
         EOF
         
-        # app/routers/websocket.py 생성 (새로 추가: 실시간 가격 스트리밍)
+        # app/routers/websocket.py 생성 (기존 동일)
         cat > app/routers/websocket.py << 'EOF'
         from fastapi import APIRouter, WebSocket, Depends
         from app.services.binance_service import async_client
@@ -584,7 +584,7 @@ jobs:
                             break
         EOF
         
-        # app/background_tasks/celery_app.py 생성 (새로 추가: Celery 설정)
+        # app/background_tasks/celery_app.py 생성 (기존 동일, but optional in README)
         mkdir -p app/background_tasks
         cat > app/background_tasks/celery_app.py << 'EOF'
         from celery import Celery
@@ -606,7 +606,7 @@ jobs:
         )
         EOF
         
-        # app/background_tasks/tasks.py 생성 (새로 추가: 주기적 position update)
+        # app/background_tasks/tasks.py 생성 (기존 동일)
         cat > app/background_tasks/tasks.py << 'EOF'
         from app.background_tasks.celery_app import celery_app
         from app.services.order_service import update_position
@@ -631,7 +631,7 @@ jobs:
                 session.commit()
         EOF
         
-        # app/core/database.py 생성 (개선: SessionLocal)
+        # app/core/database.py 생성 (기존 동일)
         cat > app/core/database.py << 'EOF'
         from sqlmodel import create_engine, Session
         from app.core.config import settings
@@ -643,11 +643,12 @@ jobs:
                 yield session
         EOF
         
-        # app/main.py 생성 (추가: websocket 라우터, celery worker 시작)
+        # app/main.py 생성 (추가: static files for frontend)
         mkdir -p app
         cat > app/main.py << 'EOF'
         from fastapi import FastAPI
         from fastapi.middleware.cors import CORSMiddleware
+        from fastapi.staticfiles import StaticFiles
         from app.core.config import settings
         from app.models.database import create_db_and_tables
         from app.routers import auth, orders, account, websocket
@@ -672,10 +673,13 @@ jobs:
         app.include_router(account.router, prefix=settings.API_V1_STR)
         app.include_router(websocket.router, prefix=settings.API_V1_STR)
 
+        # Mount frontend static files
+        app.mount("/", StaticFiles(directory="client/build", html=True), name="static")
+
         @app.on_event("startup")
         async def startup_event():
             create_db_and_tables()
-            # Celery beat 스케줄 (매 5분 position 업데이트)
+            # Celery beat 스케줄 (매 5분 position 업데이트) - optional
             celery_app.conf.beat_schedule = {
                 'update-positions-every-5-minutes': {
                     'task': 'app.background_tasks.tasks.update_all_positions',
@@ -696,7 +700,7 @@ jobs:
             uvicorn.run(app, host="0.0.0.0", port=8000)
         EOF
         
-        # tests/unit/test_order_service.py 생성 (테스트 코드 추가)
+        # tests/unit/test_order_service.py 생성 (기존 동일)
         mkdir -p tests/unit
         cat > tests/unit/test_order_service.py << 'EOF'
         import pytest
@@ -724,8 +728,433 @@ jobs:
             assert account.balance == Decimal('999950')  # 50000 - 50 fee? Wait, fee is added to cost
 
         # 추가 테스트 케이스 작성
-        EOF              
-        # README.md 생성 (상세 설명 추가)
+        EOF
+        
+        # Frontend setup: Create a simple React app in client/
+        cd client
+        cat > package.json << 'EOF'
+        {
+          "name": "beencoin-frontend",
+          "version": "0.1.0",
+          "private": true,
+          "dependencies": {
+            "react": "^18.2.0",
+            "react-dom": "^18.2.0",
+            "react-scripts": "5.0.1",
+            "chart.js": "^4.4.4",
+            "react-chartjs-2": "^5.2.0",
+            "axios": "^1.7.7",
+            "react-router-dom": "^6.27.0",
+            "react-toastify": "^10.0.5",
+            "recharts": "^2.12.7"
+          },
+          "scripts": {
+            "start": "react-scripts start",
+            "build": "react-scripts build",
+            "test": "react-scripts test",
+            "eject": "react-scripts eject"
+          },
+          "eslintConfig": {
+            "extends": [
+              "react-app",
+              "react-app/jest"
+            ]
+          },
+          "browserslist": [
+            ">0.2%",
+            "not dead",
+            "not op_mini all"
+          ]
+        }
+        EOF
+        
+        cat > public/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <meta name="theme-color" content="#000000" />
+            <meta
+              name="description"
+              content="BeenCoin 모의투자 플랫폼"
+            />
+            <title>BeenCoin</title>
+          </head>
+          <body>
+            <noscript>You need to enable JavaScript to run this app.</noscript>
+            <div id="root"></div>
+          </body>
+        </html>
+        EOF
+        
+        mkdir -p src/components
+        cat > src/App.js << 'EOF'
+        import React from 'react';
+        import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+        import Login from './components/Login';
+        import Register from './components/Register';
+        import Dashboard from './components/Dashboard';
+        import Portfolio from './components/Portfolio';
+        import OrderForm from './components/OrderForm';
+        import { ToastContainer } from 'react-toastify';
+        import 'react-toastify/dist/ReactToastify.css';
+
+        function App() {
+          return (
+            <Router>
+              <div className="App">
+                <Routes>
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/register" element={<Register />} />
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/portfolio" element={<Portfolio />} />
+                  <Route path="/order" element={<OrderForm />} />
+                  <Route path="/" element={<Login />} />
+                </Routes>
+                <ToastContainer />
+              </div>
+            </Router>
+          );
+        }
+
+        export default App;
+        EOF
+        
+        cat > src/components/Login.js << 'EOF'
+        import React, { useState } from 'react';
+        import axios from 'axios';
+        import { useNavigate } from 'react-router-dom';
+        import { toast } from 'react-toastify';
+
+        const Login = () => {
+          const [username, setUsername] = useState('');
+          const [password, setPassword] = useState('');
+          const navigate = useNavigate();
+
+          const handleSubmit = async (e) => {
+            e.preventDefault();
+            try {
+              const response = await axios.post('/api/v1/auth/login', { username, password });
+              localStorage.setItem('token', response.data.access_token);
+              toast.success('로그인 성공!');
+              navigate('/dashboard');
+            } catch (error) {
+              toast.error('로그인 실패: ' + (error.response?.data?.detail || '오류 발생'));
+            }
+          };
+
+          return (
+            <div style={{ maxWidth: '400px', margin: 'auto', padding: '20px' }}>
+              <h2>로그인</h2>
+              <form onSubmit={handleSubmit}>
+                <input
+                  type="text"
+                  placeholder="아이디"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                />
+                <input
+                  type="password"
+                  placeholder="비밀번호"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                />
+                <button type="submit" style={{ width: '100%' }}>로그인</button>
+              </form>
+              <p>계정이 없으신가요? <a href="/register">회원가입</a></p>
+            </div>
+          );
+        };
+
+        export default Login;
+        EOF
+        
+        cat > src/components/Register.js << 'EOF'
+        import React, { useState } from 'react';
+        import axios from 'axios';
+        import { useNavigate } from 'react-router-dom';
+        import { toast } from 'react-toastify';
+
+        const Register = () => {
+          const [username, setUsername] = useState('');
+          const [password, setPassword] = useState('');
+          const navigate = useNavigate();
+
+          const handleSubmit = async (e) => {
+            e.preventDefault();
+            try {
+              await axios.post('/api/v1/auth/register', { username, password });
+              toast.success('회원가입 성공! 로그인하세요.');
+              navigate('/login');
+            } catch (error) {
+              toast.error('회원가입 실패: ' + (error.response?.data?.detail || '오류 발생'));
+            }
+          };
+
+          return (
+            <div style={{ maxWidth: '400px', margin: 'auto', padding: '20px' }}>
+              <h2>회원가입</h2>
+              <form onSubmit={handleSubmit}>
+                <input
+                  type="text"
+                  placeholder="아이디"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                />
+                <input
+                  type="password"
+                  placeholder="비밀번호"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                />
+                <button type="submit" style={{ width: '100%' }}>가입하기</button>
+              </form>
+              <p>이미 계정이 있으신가요? <a href="/login">로그인</a></p>
+            </div>
+          );
+        };
+
+        export default Register;
+        EOF
+        
+        cat > src/components/Dashboard.js << 'EOF'
+        import React, { useState, useEffect } from 'react';
+        import axios from 'axios';
+        import { Line } from 'react-chartjs-2';
+        import {
+          Chart as ChartJS,
+          CategoryScale,
+          LinearScale,
+          PointElement,
+          LineElement,
+          Title,
+          Tooltip,
+          Legend,
+        } from 'chart.js';
+        import { toast } from 'react-toastify';
+
+        ChartJS.register(
+          CategoryScale,
+          LinearScale,
+          PointElement,
+          LineElement,
+          Title,
+          Tooltip,
+          Legend
+        );
+
+        const Dashboard = () => {
+          const [account, setAccount] = useState(null);
+          const [priceData, setPriceData] = useState({ labels: [], datasets: [] });
+          const token = localStorage.getItem('token');
+
+          useEffect(() => {
+            const fetchAccount = async () => {
+              try {
+                const response = await axios.get('/api/v1/account', {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                setAccount(response.data);
+              } catch (error) {
+                toast.error('계좌 정보 로드 실패');
+              }
+            };
+
+            const ws = new WebSocket('ws://localhost:8000/api/v1/ws/prices/BTCUSDT');
+            ws.onmessage = (event) => {
+              const data = JSON.parse(event.data);
+              setPriceData((prev) => {
+                const newLabels = [...prev.labels, new Date().toLocaleTimeString()];
+                const newData = [...(prev.datasets[0]?.data || []), parseFloat(data.price)];
+                return {
+                  labels: newLabels.slice(-20),
+                  datasets: [{
+                    label: 'BTCUSDT Price',
+                    data: newData.slice(-20),
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1
+                  }]
+                };
+              });
+            };
+
+            fetchAccount();
+            return () => ws.close();
+          }, [token]);
+
+          if (!account) return <div>로딩 중...</div>;
+
+          return (
+            <div style={{ padding: '20px' }}>
+              <h2>대시보드</h2>
+              <p>잔고: {account.balance}</p>
+              <p>총 수익: {account.total_profit}</p>
+              <p>수익률: {account.profit_rate}%</p>
+              <h3>실시간 BTCUSDT 가격 차트</h3>
+              <Line data={priceData} />
+              <a href="/portfolio">포트폴리오 보기</a> | <a href="/order">주문 하기</a>
+            </div>
+          );
+        };
+
+        export default Dashboard;
+        EOF
+        
+        cat > src/components/Portfolio.js << 'EOF'
+        import React, { useState, useEffect } from 'react';
+        import axios from 'axios';
+        import { toast } from 'react-toastify';
+
+        const Portfolio = () => {
+          const [positions, setPositions] = useState([]);
+          const token = localStorage.getItem('token');
+
+          useEffect(() => {
+            const fetchPortfolio = async () => {
+              try {
+                const response = await axios.get('/api/v1/account', {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                setPositions(response.data.positions);
+              } catch (error) {
+                toast.error('포트폴리오 로드 실패');
+              }
+            };
+            fetchPortfolio();
+          }, [token]);
+
+          return (
+            <div style={{ padding: '20px' }}>
+              <h2>포트폴리오</h2>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th>심볼</th>
+                    <th>수량</th>
+                    <th>평균 가격</th>
+                    <th>현재 가치</th>
+                    <th>미실현 수익</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.map((pos, index) => (
+                    <tr key={index} style={{ borderBottom: '1px solid #ddd' }}>
+                      <td>{pos.symbol}</td>
+                      <td>{pos.quantity}</td>
+                      <td>{pos.average_price}</td>
+                      <td>{pos.current_value}</td>
+                      <td style={{ color: pos.unrealized_profit > 0 ? 'green' : 'red' }}>{pos.unrealized_profit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <a href="/dashboard">대시보드로 돌아가기</a>
+            </div>
+          );
+        };
+
+        export default Portfolio;
+        EOF
+        
+        cat > src/components/OrderForm.js << 'EOF'
+        import React, { useState } from 'react';
+        import axios from 'axios';
+        import { useNavigate } from 'react-router-dom';
+        import { toast } from 'react-toastify';
+
+        const OrderForm = () => {
+          const [symbol, setSymbol] = useState('BTCUSDT');
+          const [side, setSide] = useState('BUY');
+          const [orderType, setOrderType] = useState('MARKET');
+          const [quantity, setQuantity] = useState('');
+          const [price, setPrice] = useState('');
+          const token = localStorage.getItem('token');
+          const navigate = useNavigate();
+
+          const handleSubmit = async (e) => {
+            e.preventDefault();
+            try {
+              await axios.post('/api/v1/orders', {
+                symbol,
+                side,
+                order_type: orderType,
+                quantity: parseFloat(quantity),
+                price: orderType === 'LIMIT' ? parseFloat(price) : undefined
+              }, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              toast.success('주문 성공!');
+              navigate('/dashboard');
+            } catch (error) {
+              toast.error('주문 실패: ' + (error.response?.data?.detail || '오류 발생'));
+            }
+          };
+
+          return (
+            <div style={{ maxWidth: '400px', margin: 'auto', padding: '20px' }}>
+              <h2>주문 하기</h2>
+              <form onSubmit={handleSubmit}>
+                <select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ display: 'block', margin: '10px 0', width: '100%' }}>
+                  <option>BTCUSDT</option>
+                  <option>ETHUSDT</option>
+                  <option>BNBUSDT</option>
+                </select>
+                <select value={side} onChange={(e) => setSide(e.target.value)} style={{ display: 'block', margin: '10px 0', width: '100%' }}>
+                  <option>BUY</option>
+                  <option>SELL</option>
+                </select>
+                <select value={orderType} onChange={(e) => setOrderType(e.target.value)} style={{ display: 'block', margin: '10px 0', width: '100%' }}>
+                  <option>MARKET</option>
+                  <option>LIMIT</option>
+                </select>
+                <input
+                  type="number"
+                  placeholder="수량"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                />
+                {orderType === 'LIMIT' && (
+                  <input
+                    type="number"
+                    placeholder="가격"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    style={{ display: 'block', margin: '10px 0', width: '100%' }}
+                  />
+                )}
+                <button type="submit" style={{ width: '100%' }}>주문 제출</button>
+              </form>
+              <a href="/dashboard">대시보드로 돌아가기</a>
+            </div>
+          );
+        };
+
+        export default OrderForm;
+        EOF
+        
+        cat > src/index.js << 'EOF'
+        import React from 'react';
+        import ReactDOM from 'react-dom/client';
+        import App from './App';
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(
+          <React.StrictMode>
+            <App />
+          </React.StrictMode>
+        );
+        EOF
+        
+        # Note: In production, build the frontend with 'npm run build' and serve from client/build
+        
+        # README.md 생성 (UI/UX 보완 설명 추가, Celery optional, uvicorn only for basic run)
         cat > README.md << 'EOF'
         # BeenCoin - 실시간 암호화폐 모의투자 플랫폼
 
@@ -737,14 +1166,14 @@ jobs:
         - 포트폴리오 관리: 포지션, 미실현 수익, 총 수익률 계산
         - 거래 내역 조회 및 수수료 적용 (0.1%)
         - 실시간 가격 스트리밍 (WebSocket /ws/prices/{symbol})
-        - 배경 작업: Celery + Redis로 주기적 포지션 업데이트 (매 5분)
+        - 배경 작업: Celery + Redis로 주기적 포지션 업데이트 (매 5분, optional)
         - 테스트 코드: pytest 기반 unit tests
+        - 프론트엔드 UI/UX: React 기반, 모바일 반응형 대시보드, 차트 (Chart.js), 주문 폼, 포트폴리오 테이블
+        - UI/UX 베스트 프랙티스: 간단한 네비게이션, 데이터 시각화, 토스트 알림, 반응형 디자인
 
         ## ⚡ 빠른 시작
         1. .env 파일 생성 (.env.example 참조, Binance API 키 필수)
-        2. Redis 서버 실행 (docker run -p 6379:6379 redis)
-        3. ```bash
+        2. 백엔드 실행 (기본 기능만):
+           ```bash
            pip install -r requirements.txt
-           celery -A app.background_tasks.celery_app worker --loglevel=info
-           celery -A app.background_tasks.celery_app beat --loglevel=info
            uvicorn app.main:app --reload
