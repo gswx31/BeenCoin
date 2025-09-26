@@ -588,6 +588,6 @@ jobs:
         commit-message: "🚀 BeenCoin 프론트엔드 설정: React + Tailwind CSS"
         title: "BeenCoin 프론트엔드 설정"
         body: "React와 Tailwind CSS로 프론트엔드 설정, 반응형 UI/UX, __init__.py 생략"
-        branch: "auto-frontend-branch-$(date +%s)"
+        branch: auto-backend-branch-${{ hashFiles('**') }}
         base: "main"
         delete-branch: true
