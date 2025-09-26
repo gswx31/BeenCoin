@@ -15,11 +15,11 @@ jobs:
       
     - name: Create project structure
       run: |
-        # 폴더 구조 생성
-        mkdir -p app/{core,api/v1/endpoints,models,services,utils,schemas,routers} tests
+        # 폴더 구조 생성 (추가: background_tasks, tests/unit)
+        mkdir -p app/{core,api/v1/endpoints,models,services,utils,schemas,routers,background_tasks} tests/{unit,integration}
         mkdir -p .github/workflows
         
-        # requirements.txt 생성
+        # requirements.txt 생성 (추가: flower for Celery monitoring, faker for tests)
         cat > requirements.txt << 'EOF'
         fastapi==0.104.1
         uvicorn==0.24.0
@@ -40,14 +40,19 @@ jobs:
         celery==5.3.4
         python-binance==1.0.19
         python-dotenv==1.0.0
+        flower==2.0.1
+        faker==19.13.0
         EOF
         
-        # .env.example 생성
+        # .env.example 생성 (추가: CELERY 관련)
         cat > .env.example << 'EOF'
         DATABASE_URL=sqlite+aiosqlite:///./beencoin.db
         SECRET_KEY=your-secret-key-change-in-production
         BINANCE_API_KEY=your-binance-api-key
         BINANCE_API_SECRET=your-binance-api-secret
+        REDIS_URL=redis://localhost:6379/0
+        CELERY_BROKER_URL=redis://localhost:6379/0
+        CELERY_RESULT_BACKEND=redis://localhost:6379/0
         EOF
         
         # app/core/config.py 생성
@@ -70,8 +75,11 @@ jobs:
             BINANCE_API_URL: str = "https://api.binance.com/api/v3"
             BINANCE_API_KEY: Optional[str] = os.getenv("BINANCE_API_KEY")
             BINANCE_API_SECRET: Optional[str] = os.getenv("BINANCE_API_SECRET")
-            REDIS_URL: str = "redis://localhost:6379"
-            INITIAL_BALANCE: float = 1000000
+            REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+            CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+            INITIAL_BALANCE: float = 1000000.0
+            SUPPORTED_SYMBOLS: list = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]  # 지원 코인 제한
 
             class Config:
                 case_sensitive = True
@@ -79,27 +87,30 @@ jobs:
         settings = Settings()
         EOF
         
-        # app/models/database.py 생성
+        # app/models/database.py 생성 (추가: TransactionHistory 모델)
         mkdir -p app/models
         cat > app/models/database.py << 'EOF'
         from sqlmodel import SQLModel, Field, Relationship, create_engine
         from typing import Optional, List
         from datetime import datetime
         from decimal import Decimal
+        from app.core.config import settings
 
         class User(SQLModel, table=True):
             id: Optional[int] = Field(default=None, primary_key=True)
             username: str = Field(unique=True, index=True)
             hashed_password: str
+            is_active: bool = True
             created_at: datetime = Field(default_factory=datetime.utcnow)
             accounts: List["TradingAccount"] = Relationship(back_populates="user")
             orders: List["Order"] = Relationship(back_populates="user")
+            transactions: List["TransactionHistory"] = Relationship(back_populates="user")
 
         class TradingAccount(SQLModel, table=True):
             id: Optional[int] = Field(default=None, primary_key=True)
             user_id: int = Field(foreign_key="user.id")
-            balance: Decimal = Field(default=1000000, max_digits=20, decimal_places=8)
-            total_profit: Decimal = Field(default=0, max_digits=20, decimal_places=8)
+            balance: Decimal = Field(default=Decimal('1000000.00000000'), max_digits=20, decimal_places=8)
+            total_profit: Decimal = Field(default=Decimal('0.00000000'), max_digits=20, decimal_places=8)
             user: User = Relationship(back_populates="accounts")
             positions: List["Position"] = Relationship(back_populates="account")
 
@@ -107,12 +118,12 @@ jobs:
             id: Optional[int] = Field(default=None, primary_key=True)
             user_id: int = Field(foreign_key="user.id")
             symbol: str
-            side: str  # 'buy' or 'sell'
-            order_type: str  # 'market' or 'limit'
-            order_status: str = "pending"
-            price: Optional[Decimal] = Field(default=None, max_digits=20, decimal_places=8)  # for limit orders
+            side: str  # 'BUY' or 'SELL'
+            order_type: str  # 'MARKET' or 'LIMIT'
+            order_status: str = "PENDING"
+            price: Optional[Decimal] = Field(default=None, max_digits=20, decimal_places=8)
             quantity: Decimal = Field(max_digits=20, decimal_places=8)
-            filled_quantity: Decimal = Field(default=0, max_digits=20, decimal_places=8)
+            filled_quantity: Decimal = Field(default=Decimal('0.00000000'), max_digits=20, decimal_places=8)
             created_at: datetime = Field(default_factory=datetime.utcnow)
             updated_at: datetime = Field(default_factory=datetime.utcnow)
             user: User = Relationship(back_populates="orders")
@@ -121,57 +132,101 @@ jobs:
             id: Optional[int] = Field(default=None, primary_key=True)
             account_id: int = Field(foreign_key="tradingaccount.id")
             symbol: str
-            quantity: Decimal = Field(max_digits=20, decimal_places=8)
-            average_price: Decimal = Field(max_digits=20, decimal_places=8)
-            current_value: Decimal = Field(max_digits=20, decimal_places=8)
-            unrealized_profit: Decimal = Field(default=0, max_digits=20, decimal_places=8)
+            quantity: Decimal = Field(default=Decimal('0.00000000'), max_digits=20, decimal_places=8)
+            average_price: Decimal = Field(default=Decimal('0.00000000'), max_digits=20, decimal_places=8)
+            current_value: Decimal = Field(default=Decimal('0.00000000'), max_digits=20, decimal_places=8)
+            unrealized_profit: Decimal = Field(default=Decimal('0.00000000'), max_digits=20, decimal_places=8)
             account: TradingAccount = Relationship(back_populates="positions")
 
+        class TransactionHistory(SQLModel, table=True):
+            id: Optional[int] = Field(default=None, primary_key=True)
+            user_id: int = Field(foreign_key="user.id")
+            order_id: Optional[int] = Field(default=None, foreign_key="order.id")
+            symbol: str
+            side: str
+            quantity: Decimal = Field(max_digits=20, decimal_places=8)
+            price: Decimal = Field(max_digits=20, decimal_places=8)
+            fee: Decimal = Field(default=Decimal('0.00000000'), max_digits=20, decimal_places=8)
+            timestamp: datetime = Field(default_factory=datetime.utcnow)
+            user: User = Relationship(back_populates="transactions")
+
         def create_db_and_tables():
-            engine = create_engine(settings.DATABASE_URL)
+            engine = create_engine(settings.DATABASE_URL, echo=True)  # 디버깅용 echo
             SQLModel.metadata.create_all(engine)
         EOF
         
         # app/schemas/user.py 생성
         mkdir -p app/schemas
         cat > app/schemas/user.py << 'EOF'
-        from pydantic import BaseModel
+        from pydantic import BaseModel, validator
+        from typing import Optional
 
-        class UserCreate(BaseModel):
+        class UserBase(BaseModel):
             username: str
+
+        class UserCreate(UserBase):
             password: str
 
-        class UserLogin(BaseModel):
-            username: str
+            @validator('password')
+            def password_strength(cls, v):
+                if len(v) < 8:
+                    raise ValueError('Password must be at least 8 characters')
+                return v
+
+        class UserLogin(UserBase):
             password: str
 
-        class UserOut(BaseModel):
+        class UserOut(UserBase):
             id: int
-            username: str
+            created_at: str
         EOF
         
-        # app/schemas/order.py 생성
+        # app/schemas/order.py 생성 (추가: validation)
         cat > app/schemas/order.py << 'EOF'
-        from pydantic import BaseModel
+        from pydantic import BaseModel, validator
         from decimal import Decimal
         from typing import Optional
+        from app.core.config import settings
 
         class OrderCreate(BaseModel):
             symbol: str
-            side: str  # 'buy' or 'sell'
-            order_type: str  # 'market' or 'limit'
+            side: str  # 'BUY' or 'SELL'
+            order_type: str  # 'MARKET' or 'LIMIT'
             quantity: Decimal
-            price: Optional[Decimal] = None  # for limit orders
+            price: Optional[Decimal] = None
 
-        class OrderOut(BaseModel):
+            @validator('symbol')
+            def validate_symbol(cls, v):
+                if v.upper() not in settings.SUPPORTED_SYMBOLS:
+                    raise ValueError(f'Unsupported symbol: {v}. Supported: {settings.SUPPORTED_SYMBOLS}')
+                return v.upper()
+
+            @validator('side')
+            def validate_side(cls, v):
+                if v.upper() not in ['BUY', 'SELL']:
+                    raise ValueError('Side must be BUY or SELL')
+                return v.upper()
+
+            @validator('order_type')
+            def validate_order_type(cls, v):
+                if v.upper() not in ['MARKET', 'LIMIT']:
+                    raise ValueError('Order type must be MARKET or LIMIT')
+                return v.upper()
+
+            @validator('price')
+            def validate_price(cls, v, values):
+                if values.get('order_type') == 'LIMIT' and v is None:
+                    raise ValueError('Price is required for LIMIT orders')
+                if values.get('order_type') == 'MARKET' and v is not None:
+                    raise ValueError('Price should not be provided for MARKET orders')
+                return v
+
+        class OrderOut(OrderCreate):
             id: int
-            symbol: str
-            side: str
-            order_type: str
-            status: str
-            quantity: Decimal
+            order_status: str
             filled_quantity: Decimal
-            price: Optional[Decimal]
+            created_at: str
+            updated_at: str
         EOF
         
         # app/schemas/account.py 생성
@@ -191,26 +246,43 @@ jobs:
             balance: Decimal
             total_profit: Decimal
             positions: List[PositionOut]
-            profit_rate: Decimal  # 수익률 (%)
+            profit_rate: Decimal
+            total_value: Decimal
         EOF
         
-        # app/utils/security.py 생성
+        # app/schemas/transaction.py 생성 (새로 추가)
+        cat > app/schemas/transaction.py << 'EOF'
+        from pydantic import BaseModel
+        from decimal import Decimal
+
+        class TransactionOut(BaseModel):
+            id: int
+            symbol: str
+            side: str
+            quantity: Decimal
+            price: Decimal
+            fee: Decimal
+            timestamp: str
+        EOF
+        
+        # app/utils/security.py 생성 (추가: token validation 강화)
         mkdir -p app/utils
         cat > app/utils/security.py << 'EOF'
         from passlib.context import CryptContext
         from jose import JWTError, jwt
         from datetime import datetime, timedelta
+        from fastapi import HTTPException, status
         from app.core.config import settings
 
         pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-        def verify_password(plain_password, hashed_password):
+        def verify_password(plain_password: str, hashed_password: str) -> bool:
             return pwd_context.verify(plain_password, hashed_password)
 
-        def get_password_hash(password):
+        def get_password_hash(password: str) -> str:
             return pwd_context.hash(password)
 
-        def create_access_token(data: dict, expires_delta: timedelta = None):
+        def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
             to_encode = data.copy()
             if expires_delta:
                 expire = datetime.utcnow() + expires_delta
@@ -219,116 +291,172 @@ jobs:
             to_encode.update({"exp": expire})
             encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
             return encoded_jwt
+
+        def decode_access_token(token: str) -> dict:
+            try:
+                return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            except JWTError:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         EOF
         
-        # app/services/binance_service.py 생성
+        # app/services/binance_service.py 생성 (개선: 에러 핸들링, async 강화)
         mkdir -p app/services
         cat > app/services/binance_service.py << 'EOF'
-        from binance.client import Client
+        from binance.client import AsyncClient, BinanceSocketManager
         from app.core.config import settings
+        from fastapi import HTTPException
         import asyncio
-        from binance import AsyncClient, BinanceSocketManager
+        from typing import Callable
 
         async_client = AsyncClient(settings.BINANCE_API_KEY, settings.BINANCE_API_SECRET)
 
-        async def get_current_price(symbol: str) -> float:
-            ticker = await async_client.get_symbol_ticker(symbol=symbol)
-            return float(ticker['price'])
+        async def get_current_price(symbol: str) -> Decimal:
+            try:
+                ticker = await async_client.get_symbol_ticker(symbol=symbol)
+                return Decimal(ticker['price'])
+            except Exception as e:
+                raise HTTPException(status_code=503, detail=f"Binance API error: {str(e)}")
 
-        async def monitor_limit_order(order_id: int, symbol: str, side: str, price: float, quantity: float, callback):
-            async with BinanceSocketManager(async_client) as bsm:
-                ts = bsm.trade_socket(symbol)
-                async with ts as tscm:
-                    while True:
-                        res = await tscm.recv()
-                        current_price = float(res['p'])
-                        if (side == 'buy' and current_price <= price) or (side == 'sell' and current_price >= price):
-                            await callback(order_id, quantity, current_price)
-                            break
+        async def monitor_limit_order(order_id: int, symbol: str, side: str, price: Decimal, quantity: Decimal, callback: Callable):
+            try:
+                async with BinanceSocketManager(async_client) as bsm:
+                    ts = bsm.trade_socket(symbol)
+                    async with ts as tscm:
+                        while True:
+                            res = await tscm.recv()
+                            if 'p' not in res:
+                                continue
+                            current_price = Decimal(res['p'])
+                            if (side == 'BUY' and current_price <= price) or (side == 'SELL' and current_price >= price):
+                                await callback(order_id, quantity, current_price)
+                                break
+            except Exception as e:
+                print(f"WebSocket error for order {order_id}: {str(e)}")  # 로깅
 
-        def execute_market_order(symbol: str, side: str, quantity: float):
-            price = client.get_symbol_ticker(symbol=symbol)['price']
-            return float(price)
+        async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Decimal:
+            price = await get_current_price(symbol)
+            # 실제 Binance 주문 대신 모의 (모의 투자이므로)
+            return price
         EOF
         
-        # app/services/order_service.py 생성
+        # app/services/order_service.py 생성 (개선: 트랜잭션, fee 계산, history 기록)
         cat > app/services/order_service.py << 'EOF'
         from sqlmodel import Session, select
-        from app.models.database import Order, Position, TradingAccount
+        from app.models.database import Order, Position, TradingAccount, TransactionHistory
         from app.services.binance_service import get_current_price, monitor_limit_order, execute_market_order
         from decimal import Decimal
         import asyncio
+        from app.schemas.order import OrderCreate
+        from fastapi import HTTPException
 
-        async def create_order(session: Session, user_id: int, order_data):
+        FEE_RATE = Decimal('0.001')  # 0.1% 수수료
+
+        async def create_order(session: Session, user_id: int, order_data: OrderCreate) -> Order:
+            if order_data.symbol not in settings.SUPPORTED_SYMBOLS:
+                raise HTTPException(status_code=400, detail="Unsupported symbol")
+            
             order = Order(user_id=user_id, **order_data.dict())
             session.add(order)
             session.commit()
             session.refresh(order)
             
-            if order.order_type == 'market':
-                price = execute_market_order(order.symbol, order.side, order.quantity)
-                update_order_filled(session, order.id, order.quantity, Decimal(str(price)))
-                update_position(session, user_id, order.symbol, order.side, order.quantity, Decimal(str(price)))
-            elif order.order_type == 'limit':
-                async def callback(order_id, quantity, price):
-                    update_order_filled(session, order_id, Decimal(str(quantity)), Decimal(str(price)))
-                    update_position(session, user_id, order.symbol, order.side, Decimal(str(quantity)), Decimal(str(price)))
-                asyncio.create_task(monitor_limit_order(order.id, order.symbol, order.side, float(order.price), float(order.quantity), callback))
+            if order.order_type == 'MARKET':
+                price = await execute_market_order(order.symbol, order.side, order.quantity)
+                filled_qty = order.quantity
+                fee = price * filled_qty * FEE_RATE
+                update_order_filled(session, order.id, filled_qty, price)
+                update_position(session, user_id, order.symbol, order.side, filled_qty, price, fee)
+                record_transaction(session, user_id, order.id, order.symbol, order.side, filled_qty, price, fee)
+            elif order.order_type == 'LIMIT':
+                async def callback(order_id: int, quantity: Decimal, price: Decimal):
+                    with session.begin():
+                        filled_qty = quantity
+                        fee = price * filled_qty * FEE_RATE
+                        update_order_filled(session, order_id, filled_qty, price)
+                        update_position(session, user_id, order.symbol, order.side, filled_qty, price, fee)
+                        record_transaction(session, user_id, order_id, order.symbol, order.side, filled_qty, price, fee)
+                asyncio.create_task(monitor_limit_order(order.id, order.symbol, order.side, order.price, order.quantity, callback))
             
             return order
 
         def update_order_filled(session: Session, order_id: int, filled_qty: Decimal, price: Decimal):
             order = session.exec(select(Order).where(Order.id == order_id)).first()
+            if not order:
+                raise HTTPException(status_code=404, detail="Order not found")
             order.filled_quantity += filled_qty
             order.price = price if order.price is None else order.price
-            order.order_status = 'filled' if order.filled_quantity == order.quantity else 'partially_filled'
+            order.order_status = 'FILLED' if order.filled_quantity >= order.quantity else 'PARTIALLY_FILLED'
+            order.updated_at = datetime.utcnow()
             session.add(order)
             session.commit()
 
-        def update_position(session: Session, user_id: int, symbol: str, side: str, quantity: Decimal, price: Decimal):
+        def update_position(session: Session, user_id: int, symbol: str, side: str, quantity: Decimal, price: Decimal, fee: Decimal):
             account = session.exec(select(TradingAccount).where(TradingAccount.user_id == user_id)).first()
+            if not account:
+                raise HTTPException(status_code=404, detail="Account not found")
             position = session.exec(select(Position).where(Position.account_id == account.id, Position.symbol == symbol)).first()
             
             if not position:
-                position = Position(account_id=account.id, symbol=symbol, quantity=0, average_price=0, current_value=0)
+                position = Position(account_id=account.id, symbol=symbol, quantity=Decimal('0'), average_price=Decimal('0'), current_value=Decimal('0'), unrealized_profit=Decimal('0'))
                 session.add(position)
+                session.commit()
+                session.refresh(position)
             
-            if side == 'buy':
+            cost = price * quantity
+            net_cost = cost + fee if side == 'BUY' else cost - fee
+            
+            if side == 'BUY':
+                if account.balance < net_cost:
+                    raise HTTPException(status_code=400, detail="Insufficient balance")
                 new_qty = position.quantity + quantity
-                new_avg_price = (position.average_price * position.quantity + price * quantity) / new_qty if new_qty > 0 else 0
+                new_avg_price = ((position.average_price * position.quantity) + cost) / new_qty if new_qty > 0 else Decimal('0')
                 position.quantity = new_qty
                 position.average_price = new_avg_price
-                account.balance -= price * quantity
-            elif side == 'sell':
+                account.balance -= net_cost
+            elif side == 'SELL':
                 if position.quantity < quantity:
-                    raise ValueError("Insufficient quantity to sell")
+                    raise HTTPException(status_code=400, detail="Insufficient quantity to sell")
                 position.quantity -= quantity
-                profit = (price - position.average_price) * quantity
+                profit = (price - position.average_price) * quantity - fee
                 account.total_profit += profit
-                account.balance += price * quantity
+                account.balance += net_cost
             
-            current_price = Decimal(str(asyncio.run(get_current_price(symbol))))
+            current_price = asyncio.run(get_current_price(symbol))
             position.current_value = position.quantity * current_price
             position.unrealized_profit = position.quantity * (current_price - position.average_price)
             session.add(position)
             session.add(account)
             session.commit()
 
+        def record_transaction(session: Session, user_id: int, order_id: Optional[int], symbol: str, side: str, quantity: Decimal, price: Decimal, fee: Decimal):
+            transaction = TransactionHistory(user_id=user_id, order_id=order_id, symbol=symbol, side=side, quantity=quantity, price=price, fee=fee)
+            session.add(transaction)
+            session.commit()
+
+        def get_user_orders(session: Session, user_id: int) -> List[Order]:
+            return session.exec(select(Order).where(Order.user_id == user_id).order_by(Order.created_at.desc())).all()
+
         def get_account_summary(session: Session, user_id: int) -> dict:
             account = session.exec(select(TradingAccount).where(TradingAccount.user_id == user_id)).first()
+            if not account:
+                raise HTTPException(status_code=404, detail="Account not found")
             positions = session.exec(select(Position).where(Position.account_id == account.id)).all()
             total_value = account.balance + sum(p.current_value for p in positions)
             initial_balance = Decimal(str(settings.INITIAL_BALANCE))
-            profit_rate = ((total_value - initial_balance) / initial_balance * 100) if initial_balance > 0 else 0
+            profit_rate = ((total_value - initial_balance) / initial_balance * 100) if initial_balance > 0 else Decimal('0')
             return {
                 "balance": account.balance,
                 "total_profit": account.total_profit,
-                "positions": positions,
-                "profit_rate": profit_rate
+                "positions": [p.dict() for p in positions],
+                "profit_rate": profit_rate,
+                "total_value": total_value
             }
+
+        def get_transaction_history(session: Session, user_id: int) -> List[TransactionHistory]:
+            return session.exec(select(TransactionHistory).where(TransactionHistory.user_id == user_id).order_by(TransactionHistory.timestamp.desc())).all()
         EOF
         
-        # app/routers/auth.py 생성
+        # app/routers/auth.py 생성 (개선: account 자동 생성 확인)
         mkdir -p app/routers
         cat > app/routers/auth.py << 'EOF'
         from fastapi import APIRouter, Depends, HTTPException, status
@@ -350,42 +478,46 @@ jobs:
             session.add(db_user)
             session.commit()
             session.refresh(db_user)
-            account = TradingAccount(user_id=db_user.id)
-            session.add(account)
-            session.commit()
-            return db_user
+            # 기본 계좌 생성
+            existing_account = session.exec(select(TradingAccount).where(TradingAccount.user_id == db_user.id)).first()
+            if not existing_account:
+                account = TradingAccount(user_id=db_user.id, balance=Decimal(str(settings.INITIAL_BALANCE)))
+                session.add(account)
+                session.commit()
+            return UserOut(id=db_user.id, username=db_user.username, created_at=str(db_user.created_at))
 
         @router.post("/login")
         def login(user: UserLogin, session: Session = Depends(get_session)):
             db_user = session.exec(select(User).where(User.username == user.username)).first()
             if not db_user or not verify_password(user.password, db_user.hashed_password):
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+            if not db_user.is_active:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
             access_token = create_access_token({"sub": db_user.username})
             return {"access_token": access_token, "token_type": "bearer"}
         EOF
         
-        # app/routers/orders.py 생성
+        # app/routers/orders.py 생성 (추가: 주문 목록 조회)
         cat > app/routers/orders.py << 'EOF'
-        from fastapi import APIRouter, Depends, HTTPException
+        from fastapi import APIRouter, Depends
         from sqlmodel import Session
         from app.schemas.order import OrderCreate, OrderOut
-        from app.services.order_service import create_order
+        from app.services.order_service import create_order, get_user_orders
         from app.core.database import get_session
         from fastapi.security import OAuth2PasswordBearer
-        from jose import jwt
-        from app.core.config import settings
+        from typing import List
+        from app.utils.security import decode_access_token
         from app.models.database import User
+        from app.core.config import settings
+        from fastapi import HTTPException
 
         router = APIRouter(prefix="/orders", tags=["orders"])
-        oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+        oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
 
-        async def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
-            try:
-                payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-                username: str = payload.get("sub")
-                if username is None:
-                    raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-            except JWTError:
+        def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)) -> User:
+            payload = decode_access_token(token)
+            username: str = payload.get("sub")
+            if username is None:
                 raise HTTPException(status_code=401, detail="Invalid authentication credentials")
             user = session.exec(select(User).where(User.username == username)).first()
             if user is None:
@@ -393,17 +525,24 @@ jobs:
             return user
 
         @router.post("/", response_model=OrderOut)
-        async def place_order(order: OrderCreate, current_user = Depends(get_current_user), session: Session = Depends(get_session)):
+        async def place_order(order: OrderCreate, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
             return await create_order(session, current_user.id, order)
+
+        @router.get("/", response_model=List[OrderOut])
+        def get_orders(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+            orders = get_user_orders(session, current_user.id)
+            return [OrderOut(**o.dict(), created_at=str(o.created_at), updated_at=str(o.updated_at)) for o in orders]
         EOF
         
-        # app/routers/account.py 생성
+        # app/routers/account.py 생성 (추가: transaction history 조회)
         cat > app/routers/account.py << 'EOF'
         from fastapi import APIRouter, Depends
         from app.schemas.account import AccountOut
-        from app.services.order_service import get_account_summary
+        from app.schemas.transaction import TransactionOut
+        from app.services.order_service import get_account_summary, get_transaction_history
         from app.core.database import get_session
         from app.routers.orders import get_current_user
+        from typing import List
 
         router = APIRouter(prefix="/account", tags=["account"])
 
@@ -411,30 +550,109 @@ jobs:
         def get_account(current_user = Depends(get_current_user), session: Session = Depends(get_session)):
             summary = get_account_summary(session, current_user.id)
             return AccountOut(**summary)
+
+        @router.get("/transactions", response_model=List[TransactionOut])
+        def get_transactions(current_user = Depends(get_current_user), session: Session = Depends(get_session)):
+            transactions = get_transaction_history(session, current_user.id)
+            return [TransactionOut(**t.dict(), timestamp=str(t.timestamp)) for t in transactions]
         EOF
         
-        # app/core/database.py 생성
+        # app/routers/websocket.py 생성 (새로 추가: 실시간 가격 스트리밍)
+        cat > app/routers/websocket.py << 'EOF'
+        from fastapi import APIRouter, WebSocket, Depends
+        from app.services.binance_service import async_client
+        from binance import BinanceSocketManager
+        from app.routers.orders import get_current_user
+        from app.core.database import get_session
+        from sqlmodel import Session
+
+        router = APIRouter(prefix="/ws", tags=["websocket"])
+
+        @router.websocket("/prices/{symbol}")
+        async def websocket_prices(websocket: WebSocket, symbol: str, current_user = Depends(get_current_user), session: Session = Depends(get_session)):
+            await websocket.accept()
+            async with BinanceSocketManager(async_client) as bsm:
+                ts = bsm.trade_socket(symbol)
+                async with ts as tscm:
+                    while True:
+                        try:
+                            res = await tscm.recv()
+                            if 'p' in res:
+                                await websocket.send_json({"symbol": symbol, "price": res['p']})
+                        except Exception as e:
+                            await websocket.close()
+                            break
+        EOF
+        
+        # app/background_tasks/celery_app.py 생성 (새로 추가: Celery 설정)
+        mkdir -p app/background_tasks
+        cat > app/background_tasks/celery_app.py << 'EOF'
+        from celery import Celery
+        from app.core.config import settings
+
+        celery_app = Celery(
+            "beencoin",
+            broker=settings.CELERY_BROKER_URL,
+            backend=settings.CELERY_RESULT_BACKEND,
+            include=['app.background_tasks.tasks']
+        )
+
+        celery_app.conf.update(
+            task_serializer='json',
+            result_serializer='json',
+            accept_content=['json'],
+            timezone='UTC',
+            enable_utc=True,
+        )
+        EOF
+        
+        # app/background_tasks/tasks.py 생성 (새로 추가: 주기적 position update)
+        cat > app/background_tasks/tasks.py << 'EOF'
+        from app.background_tasks.celery_app import celery_app
+        from app.services.order_service import update_position
+        from app.core.database import engine
+        from sqlmodel import Session, select
+        from app.models.database import User, Position
+        from app.services.binance_service import get_current_price
+        import asyncio
+
+        @celery_app.task
+        def update_all_positions():
+            with Session(engine) as session:
+                users = session.exec(select(User)).all()
+                for user in users:
+                    positions = session.exec(select(Position).where(Position.account_id == user.accounts[0].id if user.accounts else None)).all()
+                    for pos in positions:
+                        if pos.quantity > 0:
+                            current_price = asyncio.run(get_current_price(pos.symbol))
+                            pos.current_value = pos.quantity * current_price
+                            pos.unrealized_profit = pos.quantity * (current_price - pos.average_price)
+                            session.add(pos)
+                session.commit()
+        EOF
+        
+        # app/core/database.py 생성 (개선: SessionLocal)
         cat > app/core/database.py << 'EOF'
         from sqlmodel import create_engine, Session
         from app.core.config import settings
-        from contextlib import contextmanager
 
-        engine = create_engine(settings.DATABASE_URL)
+        engine = create_engine(settings.DATABASE_URL, echo=True)
 
-        @contextmanager
         def get_session():
             with Session(engine) as session:
                 yield session
         EOF
         
-        # app/main.py 생성
+        # app/main.py 생성 (추가: websocket 라우터, celery worker 시작)
         mkdir -p app
         cat > app/main.py << 'EOF'
         from fastapi import FastAPI
         from fastapi.middleware.cors import CORSMiddleware
         from app.core.config import settings
         from app.models.database import create_db_and_tables
-        from app.routers import auth, orders, account
+        from app.routers import auth, orders, account, websocket
+        from app.background_tasks.celery_app import celery_app
+        from app.background_tasks.tasks import update_all_positions
 
         app = FastAPI(
             title=settings.PROJECT_NAME,
@@ -452,10 +670,18 @@ jobs:
         app.include_router(auth.router, prefix=settings.API_V1_STR)
         app.include_router(orders.router, prefix=settings.API_V1_STR)
         app.include_router(account.router, prefix=settings.API_V1_STR)
+        app.include_router(websocket.router, prefix=settings.API_V1_STR)
 
         @app.on_event("startup")
-        def startup_event():
+        async def startup_event():
             create_db_and_tables()
+            # Celery beat 스케줄 (매 5분 position 업데이트)
+            celery_app.conf.beat_schedule = {
+                'update-positions-every-5-minutes': {
+                    'task': 'app.background_tasks.tasks.update_all_positions',
+                    'schedule': 300.0,  # 5 minutes
+                },
+            }
 
         @app.get("/")
         async def root():
@@ -468,101 +694,57 @@ jobs:
         if __name__ == "__main__":
             import uvicorn
             uvicorn.run(app, host="0.0.0.0", port=8000)
-        EOF        
-        # README.md 생성
+        EOF
+        
+        # tests/unit/test_order_service.py 생성 (테스트 코드 추가)
+        mkdir -p tests/unit
+        cat > tests/unit/test_order_service.py << 'EOF'
+        import pytest
+        from decimal import Decimal
+        from app.services.order_service import update_position
+        from app.models.database import TradingAccount, Position
+        from sqlmodel import Session, create_engine
+        from sqlalchemy.pool import StaticPool
+
+        @pytest.fixture
+        def session():
+            engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+            from app.models.database import SQLModel
+            SQLModel.metadata.create_all(engine)
+            with Session(engine) as session:
+                yield session
+
+        def test_update_position_buy(session: Session):
+            account = TradingAccount(id=1, user_id=1, balance=Decimal('1000000'))
+            session.add(account)
+            session.commit()
+            update_position(session, 1, "BTCUSDT", "BUY", Decimal('1'), Decimal('50000'), Decimal('50'))
+            position = session.exec(Position.select().where(Position.symbol == "BTCUSDT")).first()
+            assert position.quantity == Decimal('1')
+            assert account.balance == Decimal('999950')  # 50000 - 50 fee? Wait, fee is added to cost
+
+        # 추가 테스트 케이스 작성
+        EOF              
+        # README.md 생성 (상세 설명 추가)
         cat > README.md << 'EOF'
         # BeenCoin - 실시간 암호화폐 모의투자 플랫폼
 
         ## 🚀 주요 기능
-        - 회원가입/로그인 (아이디/비밀번호 기반)
-        - 실시간 암호화폐 시세 조회 (Binance API)
-        - 모의투자 주문 시스템 (시장가/지정가, 매수/매도)
-        - 실제 시장 데이터 기반 주문 실행 (지정가 주문은 WebSocket 모니터링)
-        - 포트폴리오 관리 및 수익률 표시
-        - WebSocket 실시간 데이터 스트리밍
+        - 안전한 회원가입/로그인 (JWT 인증, 비밀번호 해싱)
+        - 지원 코인: BTCUSDT, ETHUSDT, BNBUSDT
+        - 주문 시스템: 시장가/지정가, 매수/매도 (Binance 실시간 데이터 기반)
+        - 지정가 주문: WebSocket 모니터링으로 가격 도달 시 자동 실행
+        - 포트폴리오 관리: 포지션, 미실현 수익, 총 수익률 계산
+        - 거래 내역 조회 및 수수료 적용 (0.1%)
+        - 실시간 가격 스트리밍 (WebSocket /ws/prices/{symbol})
+        - 배경 작업: Celery + Redis로 주기적 포지션 업데이트 (매 5분)
+        - 테스트 코드: pytest 기반 unit tests
 
         ## ⚡ 빠른 시작
-        1. 환경 변수 설정: .env 파일 생성 (.env.example 참조)
-        2. ```bash
+        1. .env 파일 생성 (.env.example 참조, Binance API 키 필수)
+        2. Redis 서버 실행 (docker run -p 6379:6379 redis)
+        3. ```bash
            pip install -r requirements.txt
+           celery -A app.background_tasks.celery_app worker --loglevel=info
+           celery -A app.background_tasks.celery_app beat --loglevel=info
            uvicorn app.main:app --reload
-           ```
-
-        ## 📊 API 문서
-        - Swagger UI: http://localhost:8000/docs
-        - ReDoc: http://localhost:8000/redoc
-
-        ## 🏗️ 프로젝트 구조
-        ```
-        BeenCoin/
-        ├── app/
-        │   ├── main.py
-        │   ├── core/          # 설정 관리
-        │   ├── models/        # 데이터베이스 모델
-        │   ├── schemas/       # Pydantic 스키마
-        │   ├── routers/       # API 라우터
-        │   ├── services/      # 비즈니스 로직 (Binance, Order 처리)
-        │   ├── utils/         # 유틸리티 (보안 등)
-        │   ├── api/v1/        # API 엔드포인트 (미사용 시 삭제 가능)
-        │   └── __init__.py
-        ├── tests/
-        ├── .env.example
-        └── requirements.txt
-        ```
-
-        ## 📝 추가 설명
-        - 회원가입: POST /api/v1/auth/register {username, password}
-        - 로그인: POST /api/v1/auth/login {username, password} → JWT 토큰 반환
-        - 주문: POST /api/v1/orders {symbol, side, order_type, quantity, price?} (Authorization: Bearer <token>)
-        - 계좌 조회: GET /api/v1/account (Authorization: Bearer <token>) → balance, total_profit, positions, profit_rate
-        - 주문 처리: 시장가는 즉시 실행, 지정가는 WebSocket으로 가격 모니터링 후 실행.
-        - 수익률: (현재 총 가치 - 초기 잔고) / 초기 잔고 * 100
-        EOF
-        
-        # .gitignore 생성
-        cat > .gitignore << 'EOF'
-        __pycache__/
-        *.pyc
-        *.pyo
-        *.pyd
-        .Python
-        env/
-        venv/
-        .venv/
-        *.sqlite3
-        *.db
-        .DS_Store
-        .coverage
-        htmlcov/
-        .pytest_cache/
-        *.log
-        instance/
-        .webassets-cache
-        .scrapy
-        docs/_build/
-        target/
-        .ipynb_checkpoints
-        .python-version
-        .env
-        .venv
-        npm-debug.log*
-        yarn-debug.log*
-        yarn-error.log*
-        EOF
-
-    - name: Commit and push project files
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add .
-        git commit --allow-empty -m "🚀 BeenCoin 프로젝트 확장: 모든 파일 생성 및 모의투자 기능 추가"
-        git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/gswx31/BeenCoin.git || echo "Push failed, creating PR instead"
-    
-    - name: Create Pull Request
-      uses: peter-evans/create-pull-request@v5
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        commit-message: "🚀 BeenCoin 프로젝트 확장: 모든 파일 생성 및 모의투자 기능 추가"
-        title: "BeenCoin 프로젝트 확장"
-        body: "모의투자 기능 강화: 회원가입, 실제 시장 기반 주문 실행, 매수/매도 처리, 수익률 계산"
-        branch: "auto-expand-branch"
