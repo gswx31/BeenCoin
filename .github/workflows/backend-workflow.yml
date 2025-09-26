@@ -11,7 +11,7 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         fetch-depth: 0  # 전체 히스토리 가져오기
 
@@ -785,6 +785,6 @@ jobs:
         commit-message: "🚀 BeenCoin 백엔드 설정: FastAPI 구조 생성"
         title: "BeenCoin 백엔드 설정"
         body: "FastAPI 기반 백엔드 설정, Celery optional, __init__.py 생략"
-        branch: "auto-backend-branch-$(date +%s)"
+        branch: auto-backend-branch-${{ hashFiles('**') }}
         base: "main"
         delete-branch: true
