@@ -1,4 +1,4 @@
-﻿from sqlmodel import SQLModel, Field, Relationship, create_engine
+from sqlmodel import SQLModel, Field, Relationship, create_engine
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
@@ -59,7 +59,5 @@ class TransactionHistory(SQLModel, table=True):
     user: User = Relationship(back_populates="transactions")
 
 def create_db_and_tables():
-    # 동기 SQLite 연결 사용
-    sync_db_url = settings.DATABASE_URL.replace("sqlite+aiosqlite", "sqlite")
-    engine = create_engine(sync_db_url, echo=True)
+    engine = create_engine(settings.DATABASE_URL, echo=True)
     SQLModel.metadata.create_all(engine)

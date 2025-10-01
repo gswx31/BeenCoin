@@ -1,12 +1,11 @@
-# app/main.py 파일을 열고 이렇게 수정하세요:
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.models.database import create_db_and_tables
-from app.routers import auth, orders, account, websocket, market  # market은 그대로 둠
-# from app.api.v1.endpoints import auth as v1_auth, orders as v1_orders, account as v1_account, market as v1_market  # 이 줄 주석 처리
+from app.routers import auth, orders, account, websocket
+from app.api.v1.endpoints import auth as v1_auth, orders as v1_orders, account as v1_account
+from app.background_tasks.celery_app import celery_app
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -21,14 +20,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# v1 라우터 대신 기본 라우터 사용
-app.include_router(auth.router, prefix=settings.API_V1_STR)
-app.include_router(orders.router, prefix=settings.API_V1_STR)
-app.include_router(account.router, prefix=settings.API_V1_STR)
+# v1 라우터 등록
+app.include_router(v1_auth.router, prefix=settings.API_V1_STR)
+app.include_router(v1_orders.router, prefix=settings.API_V1_STR)
+app.include_router(v1_account.router, prefix=settings.API_V1_STR)
 app.include_router(websocket.router, prefix=settings.API_V1_STR)
-app.include_router(market.router, prefix=settings.API_V1_STR)
 
-app.mount("/static", StaticFiles(directory="client/", html=True), name="static")
+app.mount("/static", StaticFiles(directory="client/build", html=True), name="static")
 
 @app.on_event("startup")
 async def startup_event():
