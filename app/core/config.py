@@ -1,4 +1,7 @@
-from pydantic_settings import BaseSettings
+﻿try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    from pydantic import BaseSettings
 from typing import Optional
 from dotenv import load_dotenv
 import os
@@ -8,7 +11,7 @@ load_dotenv()
 class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "BeenCoin API"
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./beencoin.db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./beencoin.db")
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30

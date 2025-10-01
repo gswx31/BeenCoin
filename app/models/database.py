@@ -9,7 +9,7 @@ class User(SQLModel, table=True):
     username: str = Field(unique=True, index=True)
     hashed_password: str
     is_active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)  # Fixed incomplete line
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     accounts: List["TradingAccount"] = Relationship(back_populates="user")
     orders: List["Order"] = Relationship(back_populates="user")
     transactions: List["TransactionHistory"] = Relationship(back_populates="user")
@@ -52,8 +52,6 @@ class TransactionHistory(SQLModel, table=True):
     order_id: Optional[int] = Field(default=None, foreign_key="order.id")
     symbol: str
     side: str
-    quantity: Decimal = Field(max)
-
     quantity: Decimal = Field(max_digits=20, decimal_places=8)
     price: Decimal = Field(max_digits=20, decimal_places=8)
     fee: Decimal = Field(default=Decimal('0.00000000'), max_digits=20, decimal_places=8)
@@ -61,7 +59,7 @@ class TransactionHistory(SQLModel, table=True):
     user: User = Relationship(back_populates="transactions")
 
 def create_db_and_tables():
-    # Use synchronous SQLite connection
+    # 동기 SQLite 연결 사용
     sync_db_url = settings.DATABASE_URL.replace("sqlite+aiosqlite", "sqlite")
     engine = create_engine(sync_db_url, echo=True)
     SQLModel.metadata.create_all(engine)
