@@ -1,106 +1,128 @@
-﻿from app.core.config import settings
+﻿import httpx
 from fastapi import HTTPException
 import asyncio
-from typing import Callable
+from typing import Callable, List, Dict
 from decimal import Decimal
-import random
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# 모의(mock) 구현 - 실제 Binance API 없이 테스트 가능
+# Binance Public API - API 키 불필요
+BINANCE_API_URL = "https://api.binance.com/api/v3"
+
 async def get_current_price(symbol: str) -> Decimal:
+    """Binance 실시간 가격 조회"""
     try:
-        # 모의 가격 생성 (실제 API 대신)
-        mock_prices = {
-            "BTCUSDT": Decimal('50000.00'),
-            "ETHUSDT": Decimal('3000.00'), 
-            "BNBUSDT": Decimal('400.00')
-        }
-        price = mock_prices.get(symbol, Decimal('100.00'))
-        # 약간의 변동성 추가
-        variation = random.uniform(0.95, 1.05)
-        return price * Decimal(str(variation))
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{BINANCE_API_URL}/ticker/price",
+                params={"symbol": symbol}
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return Decimal(data['price'])
+            else:
+                raise HTTPException(status_code=503, detail=f"Binance API error: {response.status_code}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=503, detail="Binance API timeout")
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Binance API error: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"Failed to fetch price: {str(e)}")
 
-async def monitor_limit_order(order_id: int, symbol: str, side: str, price: Decimal, quantity: Decimal, callback: Callable):
-    # 모의 구현 - 실제 웹소켓 대신 타이머 사용
+async def get_multiple_prices(symbols: List[str]) -> Dict[str, Decimal]:
+    """여러 심볼의 현재 가격 한번에 조회"""
     try:
-        await asyncio.sleep(2)  # 2초 후에 체결되는 것으로 시뮬레이션
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # 모든 심볼 가격 한번에 조회
+            response = await client.get(f"{BINANCE_API_URL}/ticker/price")
+            if response.status_code == 200:
+                all_prices = response.json()
+                prices = {}
+                for item in all_prices:
+                    if item['symbol'] in symbols:
+                        prices[item['symbol']] = Decimal(item['price'])
+                return prices
+            else:
+                # 실패시 개별 조회
+                prices = {}
+                for symbol in symbols:
+                    try:
+                        price = await get_current_price(symbol)
+                        prices[symbol] = price
+                    except:
+                        prices[symbol] = Decimal('0')
+                return prices
+    except Exception as e:
+        print(f"Error fetching multiple prices: {e}")
+        # 에러시 빈 딕셔너리 반환
+        return {symbol: Decimal('0') for symbol in symbols}
+
+async def get_coin_info(symbol: str) -> Dict:
+    """코인 24시간 통계 정보"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{BINANCE_API_URL}/ticker/24hr",
+                params={"symbol": symbol}
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "symbol": data['symbol'],
+                    "name": symbol.replace('USDT', ''),
+                    "price": data['lastPrice'],
+                    "change": data['priceChangePercent'],
+                    "volume": data['volume'],
+                    "high": data['highPrice'],
+                    "low": data['lowPrice'],
+                    "quoteVolume": data['quoteVolume']
+                }
+            else:
+                return {}
+    except Exception as e:
+        print(f"Error fetching coin info for {symbol}: {e}")
+        return {}
+
+async def get_historical_data(symbol: str, interval: str = "1h", limit: int = 24) -> List[Dict]:
+    """과거 가격 데이터 (캔들스틱)
+    interval: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{BINANCE_API_URL}/klines",
+                params={
+                    "symbol": symbol,
+                    "interval": interval,
+                    "limit": limit
+                }
+            )
+            if response.status_code == 200:
+                klines = response.json()
+                historical_data = []
+                for kline in klines:
+                    historical_data.append({
+                        "timestamp": datetime.fromtimestamp(kline[0] / 1000).isoformat(),
+                        "open": float(kline[1]),
+                        "high": float(kline[2]),
+                        "low": float(kline[3]),
+                        "close": float(kline[4]),
+                        "volume": float(kline[5])
+                    })
+                return historical_data
+            else:
+                return []
+    except Exception as e:
+        print(f"Error fetching historical data for {symbol}: {e}")
+        return []
+
+# 주문 관련 (모의 구현)
+async def monitor_limit_order(order_id: int, symbol: str, side: str, price: Decimal, quantity: Decimal, callback: Callable):
+    """지정가 주문 모니터링 (모의 구현)"""
+    try:
+        await asyncio.sleep(2)
         await callback(order_id, quantity, price)
     except Exception as e:
-        print(f"WebSocket error for order {order_id}: {str(e)}")
+        print(f"Order monitoring error for {order_id}: {str(e)}")
 
 async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Decimal:
+    """시장가 주문 실행 (모의 구현)"""
     price = await get_current_price(symbol)
     return price
-
-async def get_coin_info(symbol: str):
-    """코인 기본 정보 반환 (모의 구현)"""
-    coin_info = {
-        "BTCUSDT": {
-            "symbol": "BTCUSDT",
-            "name": "Bitcoin",
-            "price": "50000.00",
-            "change": "2.5",
-            "volume": "2500000000"
-        },
-        "ETHUSDT": {
-            "symbol": "ETHUSDT", 
-            "name": "Ethereum",
-            "price": "3000.00",
-            "change": "1.8", 
-            "volume": "1500000000"
-        },
-        "BNBUSDT": {
-            "symbol": "BNBUSDT",
-            "name": "Binance Coin",
-            "price": "400.00",
-            "change": "0.5",
-            "volume": "500000000"
-        },
-        "ADAUSDT": {
-            "symbol": "ADAUSDT",
-            "name": "Cardano", 
-            "price": "0.45",
-            "change": "-0.3",
-            "volume": "200000000"
-        }
-    }
-    return coin_info.get(symbol, {})
-
-async def get_historical_data(symbol: str, interval: str = "1h", limit: int = 24):
-    """과거 가격 데이터 (모의 구현)"""
-    base_price = {
-        "BTCUSDT": 50000,
-        "ETHUSDT": 3000,
-        "BNBUSDT": 400,
-        "ADAUSDT": 0.45
-    }.get(symbol, 100)
-    
-    historical_data = []
-    current_time = datetime.utcnow()
-    
-    for i in range(limit):
-        # 랜덤 변동성으로 가격 생성
-        variation = random.uniform(0.98, 1.02)
-        price = base_price * variation
-        
-        timestamp = current_time - timedelta(hours=i)
-        
-        historical_data.append({
-            "timestamp": timestamp.isoformat(),
-            "open": float(price * random.uniform(0.99, 1.01)),
-            "high": float(price * random.uniform(1.01, 1.03)),
-            "low": float(price * random.uniform(0.97, 0.99)),
-            "close": float(price),
-            "volume": random.uniform(1000000, 5000000)
-        })
-    
-    return historical_data[::-1]  # 시간순으로 정렬
-
-async def get_multiple_prices(symbols: list):
-    """여러 심볼의 현재 가격 한번에 조회"""
-    prices = {}
-    for symbol in symbols:
-        prices[symbol] = await get_current_price(symbol)
-    return prices

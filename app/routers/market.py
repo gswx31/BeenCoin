@@ -1,52 +1,137 @@
-# app/routers/market.py
 from fastapi import APIRouter, HTTPException
-from app.services.binance_service import get_coin_info, get_historical_data
+from app.services.binance_service import get_coin_info, get_historical_data, get_multiple_prices
 from app.core.config import settings
 from typing import List, Dict
-import json
+import asyncio
 
 router = APIRouter(prefix="/market", tags=["market"])
 
+# 코인 메타데이터
+COINS_METADATA = {
+    "BTCUSDT": {
+        "symbol": "BTCUSDT",
+        "name": "Bitcoin",
+        "icon": "₿",
+        "color": "#F7931A",
+        "category": "메이저"
+    },
+    "ETHUSDT": {
+        "symbol": "ETHUSDT", 
+        "name": "Ethereum",
+        "icon": "Ξ",
+        "color": "#627EEA",
+        "category": "메이저"
+    },
+    "BNBUSDT": {
+        "symbol": "BNBUSDT",
+        "name": "Binance Coin", 
+        "icon": "⎈",
+        "color": "#F3BA2F",
+        "category": "메이저"
+    },
+    "ADAUSDT": {
+        "symbol": "ADAUSDT",
+        "name": "Cardano",
+        "icon": "₳",
+        "color": "#0033AD", 
+        "category": "알트코인"
+    }
+}
+
 @router.get("/coins")
 async def get_all_coins():
-    """모든 코인 기본 정보 반환"""
-    coins = [
-        {
-            "symbol": "BTCUSDT",
-            "name": "Bitcoin",
-            "icon": "₿",
-            "color": "#F7931A",
-            "category": "메이저"
-        },
-        {
-            "symbol": "ETHUSDT", 
-            "name": "Ethereum",
-            "icon": "Ξ",
-            "color": "#627EEA",
-            "category": "메이저"
-        },
-        {
-            "symbol": "BNBUSDT",
-            "name": "Binance Coin", 
-            "icon": "⎈",
-            "color": "#F3BA2F",
-            "category": "메이저"
-        },
-        {
-            "symbol": "ADAUSDT",
-            "name": "Cardano",
-            "icon": "A",
-            "color": "#0033AD", 
-            "category": "알트코인"
-        }
-    ]
-    return coins
+    """모든 지원 코인의 실시간 정보 반환"""
+    all_symbols = list(COINS_METADATA.keys())
+    
+    try:
+        # 병렬로 모든 코인 정보 가져오기
+        tasks = [get_coin_info(symbol) for symbol in all_symbols]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        coins_with_data = []
+        for i, symbol in enumerate(all_symbols):
+            coin_data = COINS_METADATA[symbol].copy()
+            
+            # API 결과가 정상인 경우
+            if not isinstance(results[i], Exception) and results[i]:
+                info = results[i]
+                coin_data['price'] = info.get('price', '0')
+                coin_data['change'] = info.get('change', '0')
+                coin_data['volume'] = info.get('volume', '0')
+                coin_data['high'] = info.get('high', '0')
+                coin_data['low'] = info.get('low', '0')
+            else:
+                # 에러 발생시 기본값
+                coin_data['price'] = '0'
+                coin_data['change'] = '0'
+                coin_data['volume'] = '0'
+                coin_data['high'] = '0'
+                coin_data['low'] = '0'
+            
+            coins_with_data.append(coin_data)
+        
+        return coins_with_data
+        
+    except Exception as e:
+        print(f"Error in get_all_coins: {e}")
+        # 전체 실패시 메타데이터만 반환
+        return [
+            {**meta, 'price': '0', 'change': '0', 'volume': '0'} 
+            for meta in COINS_METADATA.values()
+        ]
+
+@router.get("/coin/{symbol}")
+async def get_coin_detail(symbol: str):
+    """특정 코인의 상세 정보"""
+    try:
+        info = await get_coin_info(symbol)
+        if not info:
+            raise HTTPException(status_code=404, detail="Coin not found")
+        
+        # 메타데이터 추가
+        if symbol in COINS_METADATA:
+            info.update(COINS_METADATA[symbol])
+        
+        return info
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/historical/{symbol}")
 async def get_historical_prices(symbol: str, interval: str = "1h", limit: int = 24):
-    """과거 가격 데이터"""
+    """과거 가격 데이터
+    interval: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M
+    limit: 최대 1000
+    """
     try:
+        # interval 검증
+        valid_intervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
+        if interval not in valid_intervals:
+            interval = "1h"
+        
+        # limit 검증
+        if limit > 1000:
+            limit = 1000
+        elif limit < 1:
+            limit = 24
+        
         data = await get_historical_data(symbol, interval, limit)
+        if not data:
+            raise HTTPException(status_code=404, detail="No historical data found")
         return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/prices")
+async def get_all_prices():
+    """모든 지원 코인의 현재 가격만 조회"""
+    try:
+        all_symbols = list(COINS_METADATA.keys())
+        prices = await get_multiple_prices(all_symbols)
+        # Decimal을 문자열로 변환
+        return {symbol: str(price) for symbol, price in prices.items()}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

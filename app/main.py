@@ -1,18 +1,17 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.models.database import create_db_and_tables
 from app.routers import auth, orders, account, market
 from app.services.binance_service import get_multiple_prices
 import asyncio
-import json
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
+# CORS 설정
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:8000"],
@@ -35,57 +34,86 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        print(f"✅ WebSocket connected. Total: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        print(f"❌ WebSocket disconnected. Total: {len(self.active_connections)}")
 
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except:
-                pass
+    async def send_to_connection(self, websocket: WebSocket, message: dict):
+        """단일 연결에 메시지 전송 (에러 처리 포함)"""
+        try:
+            await websocket.send_json(message)
+            return True
+        except Exception as e:
+            print(f"Error sending to connection: {e}")
+            return False
 
 manager = ConnectionManager()
 
 @app.websocket("/ws/realtime")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    
     try:
         while True:
-            # 실시간 가격 업데이트 (1초마다)
-            prices = await get_multiple_prices(settings.SUPPORTED_SYMBOLS)
-            await websocket.send_json({
-                "type": "price_update",
-                "data": {symbol: str(price) for symbol, price in prices.items()}
-            })
-            await asyncio.sleep(1)
+            # 실시간 가격 업데이트
+            try:
+                all_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT"]
+                prices = await get_multiple_prices(all_symbols)
+                
+                message = {
+                    "type": "price_update",
+                    "data": {symbol: str(price) for symbol, price in prices.items()}
+                }
+                
+                # 메시지 전송 성공 여부 확인
+                success = await manager.send_to_connection(websocket, message)
+                if not success:
+                    # 전송 실패시 연결 종료
+                    break
+                    
+            except Exception as e:
+                print(f"Error fetching prices: {e}")
+            
+            # 2초 대기
+            await asyncio.sleep(2)
+            
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        print("Client disconnected normally")
     except Exception as e:
         print(f"WebSocket error: {e}")
+    finally:
         manager.disconnect(websocket)
 
 @app.on_event("startup")
 async def startup_event():
     create_db_and_tables()
-    print("=" * 50)
-    print("BeenCoin API Server Started!")
-    print(f"API Docs: http://localhost:8000/docs")
-    print(f"WebSocket: ws://localhost:8000/ws/realtime")
-    print("=" * 50)
+    print("=" * 60)
+    print("🚀 BeenCoin API Server Started!")
+    print("=" * 60)
+    print(f"📚 API Docs: http://localhost:8000/docs")
+    print(f"🔌 WebSocket: ws://localhost:8000/ws/realtime")
+    print(f"📊 Market API: http://localhost:8000/api/v1/market/coins")
+    print("=" * 60)
 
 @app.get("/")
 async def root():
     return {
         "message": "BeenCoin API 서버가 실행 중입니다!",
         "docs": "/docs",
-        "websocket": "/ws/realtime"
+        "websocket": "/ws/realtime",
+        "market": "/api/v1/market/coins"
     }
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "version": "1.0.0"}
+    return {
+        "status": "healthy", 
+        "version": "1.0.0",
+        "active_websockets": len(manager.active_connections)
+    }
 
 if __name__ == "__main__":
     import uvicorn
