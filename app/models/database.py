@@ -4,6 +4,7 @@ from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 from app.core.config import settings
+import os
 
 class User(SQLModel, table=True):
     __tablename__ = "user"
@@ -37,8 +38,8 @@ class Order(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id")
     symbol: str = Field(max_length=20)
-    side: str = Field(max_length=10)  # BUY or SELL
-    order_type: str = Field(max_length=10)  # MARKET or LIMIT
+    side: str = Field(max_length=10)
+    order_type: str = Field(max_length=10)
     order_status: str = Field(default="PENDING", max_length=20)
     price: Optional[Decimal] = Field(default=None, max_digits=20, decimal_places=8)
     quantity: Decimal = Field(max_digits=20, decimal_places=8)
@@ -81,12 +82,34 @@ class TransactionHistory(SQLModel, table=True):
 
 def create_db_and_tables():
     """데이터베이스 및 테이블 생성"""
-    # aiosqlite를 sqlite로 변경 (동기 방식)
-    sync_db_url = settings.DATABASE_URL.replace("sqlite+aiosqlite://", "sqlite:///")
+    # URL 정리 - Windows 경로 문제 해결
+    db_url = settings.DATABASE_URL
     
-    print(f"Creating database: {sync_db_url}")
+    # aiosqlite를 sqlite로 변경
+    if "sqlite+aiosqlite" in db_url:
+        db_url = db_url.replace("sqlite+aiosqlite:", "sqlite:")
     
-    engine = create_engine(sync_db_url, echo=True)
-    SQLModel.metadata.create_all(engine)
+    # 경로 정규화 (Windows 호환)
+    if db_url.startswith("sqlite:///"):
+        # sqlite:///./file.db → sqlite:///file.db
+        db_url = db_url.replace("sqlite:///./", "sqlite:///")
+        # 현재 디렉토리 기준 절대 경로로 변경
+        db_file = db_url.replace("sqlite:///", "")
+        db_path = os.path.abspath(db_file)
+        db_url = f"sqlite:///{db_path}"
     
-    print("✅ Database and tables created successfully!")
+    print(f"Creating database: {db_url}")
+    
+    try:
+        engine = create_engine(
+            db_url, 
+            echo=True,
+            connect_args={"check_same_thread": False} if "sqlite" in db_url else {}
+        )
+        
+        SQLModel.metadata.create_all(engine)
+        print("✅ Database and tables created successfully!")
+        
+    except Exception as e:
+        print(f"❌ Database creation error: {e}")
+        raise
