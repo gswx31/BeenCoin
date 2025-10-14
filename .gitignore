@@ -22,6 +22,3 @@ target/
 .python-version
 .env
 celerybeat-schedule
-/node_modules
-/node_modules/
-client/node_modules/
