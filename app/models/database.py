@@ -38,17 +38,27 @@ class Order(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id")
     symbol: str = Field(max_length=20)
-    side: str = Field(max_length=10)
-    order_type: str = Field(max_length=10)
+    side: str = Field(max_length=10)  # LONG or SHORT (선물)
+    order_type: str = Field(max_length=10)  # MARKET or LIMIT
     order_status: str = Field(default="PENDING", max_length=20)
+    
+    # 선물 거래 필드
+    leverage: int = Field(default=1)
+    position_side: str = Field(max_length=10)  # OPEN or CLOSE
+    
     price: Optional[Decimal] = Field(default=None, max_digits=20, decimal_places=8)
     quantity: Decimal = Field(max_digits=20, decimal_places=8)
     filled_quantity: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)
+    
+    # 증거금
+    margin: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
     # Relationships
-    user: User = Relationship(back_populates="orders")
+    user: "User" = Relationship(back_populates="orders")
+
 
 class Position(SQLModel, table=True):
     __tablename__ = "position"
@@ -56,13 +66,28 @@ class Position(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     account_id: int = Field(foreign_key="tradingaccount.id")
     symbol: str = Field(max_length=20)
+    
+    # 선물 거래 필드
+    side: str = Field(max_length=10)  # LONG or SHORT
+    leverage: int = Field(default=1)  # 레버리지 1~125
     quantity: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)
-    average_price: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)
-    current_value: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)
-    unrealized_profit: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)
+    entry_price: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)
+    
+    # 마진 정보
+    margin: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)  # 증거금
+    liquidation_price: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)  # 청산가
+    
+    # 수익/손실
+    unrealized_pnl: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)  # 미실현 손익
+    realized_pnl: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)  # 실현 손익
+    
+    # 상태
+    status: str = Field(default="OPEN", max_length=20)  # OPEN, CLOSED, LIQUIDATED
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    closed_at: Optional[datetime] = None
     
     # Relationships
-    account: TradingAccount = Relationship(back_populates="positions")
+    account: "TradingAccount" = Relationship(back_populates="positions")
 
 class TransactionHistory(SQLModel, table=True):
     __tablename__ = "transactionhistory"

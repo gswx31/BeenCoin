@@ -21,10 +21,10 @@ const CoinDetail = () => {
 
   // 업비트 스타일 시간 간격
   const timeIntervals = [
-    { id: '1s', label: '1초', apiInterval: '1m', limit: 60 },
-    { id: '5s', label: '5초', apiInterval: '1m', limit: 60 },
-    { id: '10s', label: '10초', apiInterval: '1m', limit: 60 },
-    { id: '30s', label: '30초', apiInterval: '1m', limit: 60 },
+    { id: '1s', label: '1초', apiInterval: '1s', limit: 60 },
+    { id: '5s', label: '5초', apiInterval: '5s', limit: 60 },
+    { id: '10s', label: '10초', apiInterval: '10s', limit: 60 },
+    { id: '30s', label: '30초', apiInterval: '30s', limit: 60 },
     { id: '1m', label: '1분', apiInterval: '1m', limit: 100 },
     { id: '3m', label: '3분', apiInterval: '3m', limit: 100 },
     { id: '5m', label: '5분', apiInterval: '5m', limit: 100 },
