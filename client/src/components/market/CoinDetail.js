@@ -1,402 +1,307 @@
 // client/src/components/market/CoinDetail.js
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useMarket } from '../../contexts/MarketContext';
 import { 
-  ComposedChart, 
-  Bar,
-  Line,
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer
+  ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, 
+  Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
+import { toast } from 'react-toastify';
 
 const CoinDetail = () => {
   const { symbol } = useParams();
   const navigate = useNavigate();
-  const [coin, setCoin] = useState(null);
-  const [historicalData, setHistoricalData] = useState([]);
-  const [realtimePrice, setRealtimePrice] = useState(null);
-  const [interval, setInterval] = useState('1m');
-  const [limit, setLimit] = useState(100);
+  const { realtimePrices } = useMarket();
+  
+  const [coinInfo, setCoinInfo] = useState(null);
+  const [chartData, setChartData] = useState([]);
+  const [selectedInterval, setSelectedInterval] = useState('1m');
+  const [chartType, setChartType] = useState('candle');
   const [loading, setLoading] = useState(true);
-  const [chartType, setChartType] = useState('candlestick'); // 'candlestick' or 'line'
-  const wsRef = useRef(null);
 
-  // useCallback으로 함수 래핑 (의존성 경고 해결 및 안정성 확보)
-  const fetchCoinDetail = useCallback(async () => {
-    try {
-      const response = await fetch(`http://localhost:8000/api/v1/market/coin/${symbol}`);
-      if (response.ok) {
-        const data = await response.json();
-        setCoin(data);
-        setRealtimePrice(parseFloat(data.price));
-      }
-    } catch (error) {
-      console.error('Failed to fetch coin detail:', error);
-    }
-  }, [symbol]);
-
-  const fetchHistoricalData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        `http://localhost:8000/api/v1/market/historical/${symbol}?interval=${interval}&limit=${limit}`
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setHistoricalData(data);
-      }
-    } catch (error) {
-      console.error('Failed to fetch historical data:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [symbol, interval, limit]);
-
-  const connectWebSocket = useCallback(() => {
-    const websocket = new WebSocket('ws://localhost:8000/ws/realtime');
-    
-    websocket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'price_update' && data.data[symbol]) {
-          const newPrice = parseFloat(data.data[symbol]);
-          setRealtimePrice(newPrice);
-          
-          // 실시간으로 마지막 캔들 업데이트
-          setHistoricalData(prev => {
-            if (prev.length === 0) return prev;
-            const updated = [...prev];
-            const lastCandle = updated[updated.length - 1];
-            updated[updated.length - 1] = {
-              ...lastCandle,
-              close: newPrice,
-              high: Math.max(lastCandle.high, newPrice),
-              low: Math.min(lastCandle.low, newPrice)
-            };
-            return updated;
-          });
-        }
-      } catch (error) {
-        console.error('WebSocket message error:', error);
-      }
-    };
-
-    wsRef.current = websocket;
-  }, [symbol]);
-
-  const getUpdateInterval = useCallback((intervalStr) => {
-    const map = {
-      '1s': 1000,
-      '5s': 5000,
-      '15s': 15000,
-      '30s': 30000,
-      '1m': 60000,
-      '5m': 5 * 60000,
-      '15m': 15 * 60000,
-      '1h': 60 * 60000,
-      '4h': 4 * 60 * 60000,
-      '1d': 24 * 60 * 60000,
-    };
-    return map[intervalStr] || 60000;
-  }, []);
+  // 업비트 스타일 시간 간격
+  const timeIntervals = [
+    { id: '1s', label: '1초', apiInterval: '1m', limit: 60 },
+    { id: '5s', label: '5초', apiInterval: '1m', limit: 60 },
+    { id: '10s', label: '10초', apiInterval: '1m', limit: 60 },
+    { id: '30s', label: '30초', apiInterval: '1m', limit: 60 },
+    { id: '1m', label: '1분', apiInterval: '1m', limit: 100 },
+    { id: '3m', label: '3분', apiInterval: '3m', limit: 100 },
+    { id: '5m', label: '5분', apiInterval: '5m', limit: 100 },
+    { id: '15m', label: '15분', apiInterval: '15m', limit: 96 },
+    { id: '30m', label: '30분', apiInterval: '30m', limit: 96 },
+    { id: '1h', label: '1시간', apiInterval: '1h', limit: 168 },
+    { id: '4h', label: '4시간', apiInterval: '4h', limit: 180 },
+    { id: '1d', label: '1일', apiInterval: '1d', limit: 100 }
+  ];
 
   useEffect(() => {
     fetchCoinDetail();
-    fetchHistoricalData();
-    connectWebSocket();
+  }, [symbol]);
 
-    // 실시간 데이터 업데이트 (선택된 interval에 따라)
-    const updateInterval = getUpdateInterval(interval);
-    const intervalId = setInterval(() => {
-      fetchHistoricalData();
-    }, updateInterval);
+  useEffect(() => {
+    fetchChartData();
+  }, [symbol, selectedInterval]);
 
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      clearInterval(intervalId);
-    };
-  }, [symbol, interval, limit, fetchCoinDetail, fetchHistoricalData, connectWebSocket, getUpdateInterval]);
+  useEffect(() => {
+    if (coinInfo && realtimePrices[symbol]) {
+      setCoinInfo(prev => ({
+        ...prev,
+        price: realtimePrices[symbol].toString()
+      }));
+    }
+  }, [realtimePrices, symbol]);
 
-  if (!coin && loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-400">코인 정보를 불러오는 중...</p>
-        </div>
-      </div>
-    );
-  }
+  const fetchCoinDetail = async () => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/market/coin/${symbol}`);
+      if (!response.ok) throw new Error('Failed to fetch coin detail');
+      const data = await response.json();
+      setCoinInfo(data);
+    } catch (error) {
+      console.error('Error fetching coin detail:', error);
+      toast.error('코인 정보를 불러올 수 없습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  if (!coin) {
-    return (
-      <div className="text-center py-20">
-        <p className="text-gray-400">코인 정보를 찾을 수 없습니다.</p>
-        <button onClick={() => navigate('/')} className="mt-4 px-4 py-2 bg-accent rounded-lg">
-          대시보드로 돌아가기
-        </button>
-      </div>
-    );
-  }
+  const fetchChartData = async () => {
+    try {
+      const config = timeIntervals.find(i => i.id === selectedInterval);
+      const { apiInterval, limit } = config;
+      
+      const response = await fetch(
+        `http://localhost:8000/api/v1/market/historical/${symbol}?interval=${apiInterval}&limit=${limit}`
+      );
+      
+      if (!response.ok) throw new Error('Failed to fetch chart data');
+      const data = await response.json();
+      
+      const formattedData = data.map((item, idx) => ({
+        time: formatTime(item.timestamp, selectedInterval),
+        open: parseFloat(item.open),
+        high: parseFloat(item.high),
+        low: parseFloat(item.low),
+        close: parseFloat(item.close),
+        volume: parseFloat(item.volume),
+        color: parseFloat(item.close) >= parseFloat(item.open) ? '#22c55e' : '#ef4444'
+      }));
+      
+      setChartData(formattedData);
+      
+    } catch (error) {
+      console.error('Error fetching chart data:', error);
+      setChartData([]);
+    }
+  };
 
-  const currentPrice = realtimePrice || parseFloat(coin.price);
-  const priceChange = parseFloat(coin.change);
-  const isPositive = priceChange >= 0;
-
-  // 캔들스틱 차트 데이터 포맷 (interval undefined 방지)
-  const candleData = historicalData.map((item) => {
-    const isUp = item.close >= item.open;
-    return {
-      time: new Date(item.timestamp).toLocaleTimeString('ko-KR', { 
+  const formatTime = (timestamp, intervalId) => {
+    const date = new Date(timestamp);
+    const config = timeIntervals.find(i => i.id === intervalId);
+    
+    if (['1s', '5s', '10s', '30s', '1m', '3m', '5m'].includes(intervalId)) {
+      return date.toLocaleTimeString('ko-KR', { 
         hour: '2-digit', 
-        minute: '2-digit',
-        second: (typeof interval === 'string' && interval?.includes('s')) ? '2-digit' : undefined
-      }),
-      open: item.open,
-      high: item.high,
-      low: item.low,
-      close: item.close,
-      volume: item.volume,
-      color: isUp ? '#10b981' : '#ef4444',
-      // 캔들 몸통
-      candleHeight: Math.abs(item.close - item.open),
-      candleY: Math.min(item.open, item.close),
-      // 심지
-      wickTop: item.high,
-      wickBottom: item.low
-    };
-  });
+        minute: '2-digit'
+      });
+    } else if (['15m', '30m', '1h', '4h'].includes(intervalId)) {
+      return date.toLocaleDateString('ko-KR', { 
+        month: 'short', 
+        day: 'numeric',
+        hour: '2-digit'
+      });
+    } else {
+      return date.toLocaleDateString('ko-KR', { 
+        month: 'short', 
+        day: 'numeric'
+      });
+    }
+  };
 
-  // 커스텀 캔들스틱 렌더러 (미사용 변수 제거, 스케일링 개선)
-  const CustomCandlestick = (props) => {
+  // 캔들스틱 커스텀 렌더러
+  const renderCandlestick = (props) => {
     const { x, y, width, height, payload } = props;
-    if (!payload || height <= 0) return null;
+    if (!payload) return null;
 
-    const candleWidth = Math.max(width * 0.6, 2);
-    const wickWidth = Math.max(width * 0.1, 1);
-    const centerX = x + width / 2;
-
-    const range = payload.high - payload.low;
-    if (range <= 0) return null;
-
-    // 몸통 픽셀 계산 (candleY와 candleHeight 사용)
-    const bodyHeight = (payload.candleHeight / range) * height;
-    const bodyY = y + ((payload.high - payload.candleY) / range) * height;
-
+    const { open, close, high, low } = payload;
+    const isUp = close >= open;
+    const color = isUp ? '#22c55e' : '#ef4444';
+    
+    const bodyHeight = Math.abs(close - open) * height / (high - low);
+    const bodyY = Math.min(open, close) * height / (high - low);
+    
     return (
       <g>
-        {/* 심지 (high-low) */}
+        {/* 심지 (High-Low) */}
         <line
-          x1={centerX}
+          x1={x + width / 2}
           y1={y}
-          x2={centerX}
+          x2={x + width / 2}
           y2={y + height}
-          stroke={payload.color}
-          strokeWidth={wickWidth}
+          stroke={color}
+          strokeWidth={1}
         />
-        {/* 몸통 (open-close) */}
+        {/* 몸통 (Open-Close) */}
         <rect
-          x={centerX - candleWidth / 2}
-          y={bodyY}
-          width={candleWidth}
-          height={Math.max(bodyHeight, 1)}
-          fill={payload.color}
+          x={x}
+          y={y + bodyY}
+          width={width}
+          height={bodyHeight || 1}
+          fill={color}
+          stroke={color}
         />
       </g>
     );
   };
 
-  return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <button 
-            onClick={() => navigate('/')} 
-            className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
-          >
-            ← 뒤로
-          </button>
-          <div 
-            className="w-16 h-16 rounded-full flex items-center justify-center text-3xl font-bold"
-            style={{ backgroundColor: coin.color }}
-          >
-            {coin.icon}
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold">{coin.name}</h1>
-            <p className="text-gray-400">{coin.symbol}</p>
-          </div>
-        </div>
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-96">
+        <div className="text-xl">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!coinInfo) {
+    return (
+      <div className="text-center py-20">
+        <p className="text-xl text-gray-400">코인 정보를 찾을 수 없습니다.</p>
         <button 
-          onClick={() => navigate(`/trade/${symbol}`)} 
-          className="px-6 py-3 bg-accent hover:bg-teal-600 rounded-lg font-semibold transition-colors"
+          onClick={() => navigate('/')}
+          className="mt-4 px-6 py-2 bg-accent rounded-lg"
         >
-          거래하기
+          홈으로 돌아가기
         </button>
       </div>
+    );
+  }
 
-      {/* 가격 정보 */}
-      <div className="bg-gray-800 rounded-lg p-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+  const isPositive = parseFloat(coinInfo.change) >= 0;
+  const currentPrice = parseFloat(coinInfo.price);
+
+  return (
+    <div className="max-w-7xl mx-auto">
+      {/* 헤더 */}
+      <div className="bg-gray-800 rounded-lg p-6 mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <div 
+              className="w-16 h-16 rounded-full flex items-center justify-center text-3xl font-bold"
+              style={{ backgroundColor: coinInfo.color }}
+            >
+              {coinInfo.icon}
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold">{coinInfo.name}</h1>
+              <p className="text-gray-400">{coinInfo.symbol}</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => navigate(`/trade/${symbol}`)}
+            className="px-8 py-3 bg-accent text-white rounded-lg hover:bg-teal-600 font-semibold"
+          >
+            거래하기
+          </button>
+        </div>
+
+        {/* 가격 정보 */}
+        <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <p className="text-gray-400 text-sm mb-1">현재가</p>
-            <p className="text-3xl font-bold">${currentPrice.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-bold">${currentPrice.toLocaleString('en-US')}</p>
           </div>
           <div>
             <p className="text-gray-400 text-sm mb-1">24시간 변동</p>
             <p className={`text-2xl font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-              {isPositive ? '+' : ''}{priceChange.toFixed(2)}%
+              {isPositive ? '+' : ''}{parseFloat(coinInfo.change).toFixed(2)}%
             </p>
           </div>
           <div>
             <p className="text-gray-400 text-sm mb-1">24시간 최고가</p>
-            <p className="text-2xl font-bold text-green-400">
-              ${parseFloat(coin.high).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
-            </p>
+            <p className="text-xl font-semibold">${parseFloat(coinInfo.high || 0).toLocaleString('en-US')}</p>
           </div>
           <div>
             <p className="text-gray-400 text-sm mb-1">24시간 최저가</p>
-            <p className="text-2xl font-bold text-red-400">
-              ${parseFloat(coin.low).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* 차트 제어 */}
-      <div className="bg-gray-800 rounded-lg p-4">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center space-x-4">
-            <h2 className="text-xl font-bold">가격 차트</h2>
-            <div className="flex space-x-2">
-              <button
-                onClick={() => setChartType('candlestick')}
-                className={`px-3 py-1 rounded ${chartType === 'candlestick' ? 'bg-accent text-white' : 'bg-gray-700 text-gray-300'}`}
-              >
-                캔들
-              </button>
-              <button
-                onClick={() => setChartType('line')}
-                className={`px-3 py-1 rounded ${chartType === 'line' ? 'bg-accent text-white' : 'bg-gray-700 text-gray-300'}`}
-              >
-                라인
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {/* 시간 간격 선택 (undefined 방지) */}
-            <select
-              value={interval || '1m'}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val) setInterval(val);
-              }}
-              className="px-3 py-2 bg-gray-700 rounded-lg border border-gray-600 focus:outline-none focus:border-accent"
-            >
-              <option value="1s">1초</option>
-              <option value="5s">5초</option>
-              <option value="15s">15초</option>
-              <option value="30s">30초</option>
-              <option value="1m">1분</option>
-              <option value="5m">5분</option>
-              <option value="15m">15분</option>
-              <option value="1h">1시간</option>
-              <option value="4h">4시간</option>
-              <option value="1d">1일</option>
-            </select>
-            {/* 데이터 개수 선택 */}
-            <select
-              value={limit}
-              onChange={(e) => setLimit(parseInt(e.target.value) || 100)}
-              className="px-3 py-2 bg-gray-700 rounded-lg border border-gray-600 focus:outline-none focus:border-accent"
-            >
-              <option value="50">50개</option>
-              <option value="100">100개</option>
-              <option value="200">200개</option>
-              <option value="500">500개</option>
-            </select>
+            <p className="text-xl font-semibold">${parseFloat(coinInfo.low || 0).toLocaleString('en-US')}</p>
           </div>
         </div>
       </div>
 
       {/* 차트 */}
       <div className="bg-gray-800 rounded-lg p-6">
-        {loading ? (
-          <div className="h-96 flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-              <p className="text-gray-400">차트 로딩 중...</p>
+        {/* 차트 컨트롤 */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center space-x-4">
+            <h2 className="text-xl font-bold">차트</h2>
+            
+            {/* 차트 타입 선택 */}
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setChartType('candle')}
+                className={`px-3 py-1 rounded text-sm ${
+                  chartType === 'candle' 
+                    ? 'bg-accent text-white' 
+                    : 'bg-gray-700 hover:bg-gray-600'
+                }`}
+              >
+                캔들
+              </button>
+              <button
+                onClick={() => setChartType('line')}
+                className={`px-3 py-1 rounded text-sm ${
+                  chartType === 'line' 
+                    ? 'bg-accent text-white' 
+                    : 'bg-gray-700 hover:bg-gray-600'
+                }`}
+              >
+                라인
+              </button>
             </div>
           </div>
-        ) : candleData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={500}>
-            {chartType === 'candlestick' ? (
-              <ComposedChart data={candleData}>
+        </div>
+
+        {/* 시간 간격 선택 */}
+        <div className="flex flex-wrap gap-2 mb-6">
+          {timeIntervals.map(interval => (
+            <button
+              key={interval.id}
+              onClick={() => setSelectedInterval(interval.id)}
+              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                selectedInterval === interval.id
+                  ? 'bg-accent text-white font-semibold'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              {interval.label}
+            </button>
+          ))}
+        </div>
+
+        {/* 차트 영역 */}
+        {chartData.length > 0 ? (
+          <div>
+            <ResponsiveContainer width="100%" height={450}>
+              <ComposedChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                 <XAxis 
                   dataKey="time" 
                   stroke="#9CA3AF"
                   tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                  interval="preserveStartEnd"
                 />
                 <YAxis 
+                  yAxisId="price"
                   stroke="#9CA3AF"
-                  tick={{ fill: '#9CA3AF' }}
+                  tick={{ fill: '#9CA3AF', fontSize: 12 }}
                   domain={['auto', 'auto']}
-                  tickFormatter={(value) => `$${value.toFixed(2)}`}
-                />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1F2937', 
-                    border: '1px solid #374151',
-                    borderRadius: '8px'
-                  }}
-                  labelStyle={{ color: '#9CA3AF' }}
-                  formatter={(value, name) => {
-                    if (name === 'volume') return [value.toFixed(2), '거래량'];
-                    return [`$${value.toFixed(2)}`, name];
-                  }}
-                />
-                {/* 캔들스틱 표시 */}
-                <Bar 
-                  dataKey="high" 
-                  fill="#8884d8"
-                  shape={<CustomCandlestick />}
-                />
-                {/* 거래량 (하단에 작게) */}
-                <Bar 
-                  dataKey="volume" 
-                  fill="#6b7280"
-                  opacity={0.3}
-                  yAxisId="volume"
+                  tickFormatter={(value) => `$${value.toLocaleString()}`}
                 />
                 <YAxis 
                   yAxisId="volume"
                   orientation="right"
-                  stroke="#6b7280"
-                  tick={false}
-                  domain={[0, 'auto']}
-                />
-              </ComposedChart>
-            ) : (
-              <ComposedChart data={candleData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis 
-                  dataKey="time" 
                   stroke="#9CA3AF"
                   tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                />
-                <YAxis 
-                  stroke="#9CA3AF"
-                  tick={{ fill: '#9CA3AF' }}
-                  domain={['auto', 'auto']}
-                  tickFormatter={(value) => `$${value.toFixed(2)}`}
+                  tickFormatter={(value) => `${(value / 1000).toFixed(0)}K`}
                 />
                 <Tooltip 
                   contentStyle={{ 
@@ -404,65 +309,135 @@ const CoinDetail = () => {
                     border: '1px solid #374151',
                     borderRadius: '8px'
                   }}
-                  labelStyle={{ color: '#9CA3AF' }}
+                  labelStyle={{ color: '#D1D5DB' }}
+                  formatter={(value, name) => {
+                    if (name === 'volume') return [`${value.toLocaleString()}`, '거래량'];
+                    return [`$${value.toLocaleString('en-US')}`, name];
+                  }}
                 />
-                <Line 
-                  type="monotone" 
-                  dataKey="close" 
-                  stroke="#14B8A6" 
-                  strokeWidth={2}
-                  dot={false}
-                  name="종가"
-                />
+                
+                {/* 차트 타입에 따라 다른 렌더링 */}
+                {chartType === 'line' ? (
+                  <Line 
+                    yAxisId="price"
+                    type="monotone" 
+                    dataKey="close" 
+                    stroke="#14B8A6" 
+                    strokeWidth={2}
+                    dot={false}
+                    name="가격"
+                  />
+                ) : (
+                  <>
+                    <Line 
+                      yAxisId="price"
+                      type="monotone" 
+                      dataKey="high" 
+                      stroke="transparent"
+                      dot={false}
+                    />
+                    <Line 
+                      yAxisId="price"
+                      type="monotone" 
+                      dataKey="low" 
+                      stroke="transparent"
+                      dot={false}
+                    />
+                    <Bar yAxisId="price" dataKey="close" shape={<CustomCandle />} />
+                  </>
+                )}
+                
+                {/* 거래량 */}
+                <Bar yAxisId="volume" dataKey="volume" opacity={0.3}>
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
               </ComposedChart>
-            )}
-          </ResponsiveContainer>
+            </ResponsiveContainer>
+          </div>
         ) : (
           <div className="h-96 flex items-center justify-center">
-            <p className="text-gray-400">차트 데이터를 불러올 수 없습니다.</p>
+            <p className="text-gray-400">차트 데이터를 불러오는 중...</p>
           </div>
         )}
-      </div>
 
-      {/* 거래 내역 테이블 */}
-      <div className="bg-gray-800 rounded-lg p-6">
-        <h2 className="text-xl font-bold mb-4">최근 거래 데이터</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-700">
-                <th className="text-left py-3 px-4">시간</th>
-                <th className="text-right py-3 px-4">시가</th>
-                <th className="text-right py-3 px-4">고가</th>
-                <th className="text-right py-3 px-4">저가</th>
-                <th className="text-right py-3 px-4">종가</th>
-                <th className="text-right py-3 px-4">변동</th>
-              </tr>
-            </thead>
-            <tbody>
-              {historicalData.slice(-20).reverse().map((data, index) => {
-                const change = ((data.close - data.open) / data.open) * 100;
-                const isUp = change >= 0;
-                return (
-                  <tr key={index} className="border-b border-gray-700 hover:bg-gray-700">
-                    <td className="py-3 px-4 text-sm">
-                      {new Date(data.timestamp).toLocaleString('ko-KR')}
-                    </td>
-                    <td className="text-right py-3 px-4">${data.open.toFixed(2)}</td>
-                    <td className="text-right py-3 px-4 text-green-400">${data.high.toFixed(2)}</td>
-                    <td className="text-right py-3 px-4 text-red-400">${data.low.toFixed(2)}</td>
-                    <td className="text-right py-3 px-4 font-semibold">${data.close.toFixed(2)}</td>
-                    <td className={`text-right py-3 px-4 ${isUp ? 'text-green-400' : 'text-red-400'}`}>
-                      {isUp ? '+' : ''}{change.toFixed(2)}%
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        {/* 거래량 정보 */}
+        <div className="mt-6 pt-6 border-t border-gray-700">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-gray-400 text-sm mb-1">24시간 거래량</p>
+              <p className="text-xl font-semibold">
+                {parseFloat(coinInfo.volume || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} {coinInfo.name}
+              </p>
+            </div>
+            <div>
+              <p className="text-gray-400 text-sm mb-1">24시간 거래대금</p>
+              <p className="text-xl font-semibold">
+                ${parseFloat(coinInfo.quoteVolume || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+  );
+};
+
+// 캔들스틱 커스텀 컴포넌트
+const CustomCandle = (props) => {
+  const { x, y, width, height, payload } = props;
+  if (!payload || !payload.open) return null;
+
+  const { open, close, high, low, color } = payload;
+  
+  // 가격 범위
+  const priceRange = high - low;
+  if (priceRange === 0) return null;
+  
+  // 캔들 몸통
+  const bodyTop = Math.max(open, close);
+  const bodyBottom = Math.min(open, close);
+  const bodyHeight = Math.abs(close - open);
+  
+  // 스케일 계산
+  const scale = height / priceRange;
+  
+  const wickTop = y + (high - bodyTop) * scale;
+  const wickBottom = y + (high - bodyBottom) * scale;
+  const bodyY = y + (high - bodyTop) * scale;
+  const bodyH = bodyHeight * scale || 1;
+  
+  return (
+    <g>
+      {/* 위 심지 */}
+      <line
+        x1={x + width / 2}
+        y1={y + (high - high) * scale}
+        x2={x + width / 2}
+        y2={bodyY}
+        stroke={color}
+        strokeWidth={1}
+      />
+      {/* 아래 심지 */}
+      <line
+        x1={x + width / 2}
+        y1={bodyY + bodyH}
+        x2={x + width / 2}
+        y2={y + (high - low) * scale}
+        stroke={color}
+        strokeWidth={1}
+      />
+      {/* 몸통 */}
+      <rect
+        x={x + 1}
+        y={bodyY}
+        width={Math.max(width - 2, 1)}
+        height={bodyH}
+        fill={color}
+        stroke={color}
+      />
+    </g>
   );
 };
 
