@@ -1,11 +1,14 @@
+# app/schemas/transaction.py
 from pydantic import BaseModel
-from decimal import Decimal
 
 class TransactionOut(BaseModel):
     id: int
     symbol: str
     side: str
-    quantity: Decimal
-    price: Decimal
-    fee: Decimal
+    quantity: float
+    price: float
+    fee: float
     timestamp: str
+    
+    class Config:
+        from_attributes = True

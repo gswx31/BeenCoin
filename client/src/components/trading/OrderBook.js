@@ -1,25 +1,28 @@
-// client/src/components/trading/OrderBook.js
 import React, { useState, useEffect } from 'react';
 
-const OrderBook = ({ symbol }) => {
+const OrderBook = ({ symbol, currentPrice }) => {
   const [orders, setOrders] = useState({ bids: [], asks: [] });
 
   useEffect(() => {
-    generateMockOrderBook();
-    const interval = setInterval(generateMockOrderBook, 2000);
+    generateOrderBook();
+    const interval = setInterval(generateOrderBook, 2000);
     return () => clearInterval(interval);
-  }, [symbol]);
+  }, [symbol, currentPrice]);
 
-  const generateMockOrderBook = () => {
-    const basePrice = 50000;
+  const generateOrderBook = () => {
+    const basePrice = currentPrice > 0 ? currentPrice : 50000;  // ✅ 실제 가격 사용
+    const spread = basePrice * 0.0002;  // 0.02% 스프레드
+    
     const bids = Array.from({ length: 10 }, (_, i) => ({
-      price: basePrice - (i * 10),
-      quantity: (Math.random() * 2).toFixed(4),
+      price: basePrice - spread - (i * spread),
+      quantity: (Math.random() * 2 + 0.1).toFixed(6),
     }));
+    
     const asks = Array.from({ length: 10 }, (_, i) => ({
-      price: basePrice + (i * 10),
-      quantity: (Math.random() * 2).toFixed(4),
+      price: basePrice + spread + (i * spread),
+      quantity: (Math.random() * 2 + 0.1).toFixed(6),
     }));
+    
     setOrders({ bids, asks });
   };
 
@@ -31,19 +34,27 @@ const OrderBook = ({ symbol }) => {
           <div className="text-sm text-gray-400 mb-2">매도 호가</div>
           <div className="space-y-1">
             {orders.asks.slice(0, 5).reverse().map((order, idx) => (
-              <div key={idx} className="flex justify-between text-sm">
-                <span className="text-red-400">${order.price.toLocaleString()}</span>
+              <div key={idx} className="flex justify-between text-sm py-1 hover:bg-gray-700 transition-colors">
+                <span className="text-red-400 font-medium">${order.price.toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
                 <span className="text-gray-400">{order.quantity}</span>
               </div>
             ))}
           </div>
         </div>
-        <div className="border-t border-gray-700 pt-4">
+        
+        {/* ✅ 현재가 표시 */}
+        <div className="border-y border-gray-700 py-2 text-center">
+          <span className="text-accent font-bold text-lg">
+            ${currentPrice > 0 ? currentPrice.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '---'}
+          </span>
+        </div>
+        
+        <div>
           <div className="text-sm text-gray-400 mb-2">매수 호가</div>
           <div className="space-y-1">
             {orders.bids.slice(0, 5).map((order, idx) => (
-              <div key={idx} className="flex justify-between text-sm">
-                <span className="text-green-400">${order.price.toLocaleString()}</span>
+              <div key={idx} className="flex justify-between text-sm py-1 hover:bg-gray-700 transition-colors">
+                <span className="text-green-400 font-medium">${order.price.toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
                 <span className="text-gray-400">{order.quantity}</span>
               </div>
             ))}
