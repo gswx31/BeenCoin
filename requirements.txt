@@ -1,7 +1,7 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 sqlalchemy==2.0.23
-sqlmodel==0.0.14  # 최신 버전으로 변경
+sqlmodel==0.0.11
 pydantic==2.5.0
 python-jose==3.3.0
 passlib==1.7.4
@@ -19,4 +19,3 @@ python-binance==1.0.19
 python-dotenv==1.0.0
 flower==2.0.1
 faker==19.13.0
-pydantic-settings==2.1.0
