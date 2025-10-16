@@ -1,3 +1,4 @@
+# app/main.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -5,28 +6,35 @@ from app.models.database import create_db_and_tables
 from app.routers import auth, orders, account, market
 from app.services.binance_service import get_multiple_prices
 import asyncio
+import logging
+
+# 로거 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8000"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 라우터 등록
-app.include_router(auth.router, prefix=settings.API_V1_STR)
-app.include_router(orders.router, prefix=settings.API_V1_STR)
-app.include_router(account.router, prefix=settings.API_V1_STR)
-app.include_router(market.router, prefix=settings.API_V1_STR)
+# API v1 라우터 등록
+app.include_router(auth.router, prefix=settings.API_V1_STR, tags=["auth"])
+app.include_router(orders.router, prefix=settings.API_V1_STR, tags=["orders"])
+app.include_router(account.router, prefix=settings.API_V1_STR, tags=["account"])
+app.include_router(market.router, prefix=settings.API_V1_STR, tags=["market"])
 
-# WebSocket 연결 관리
+# WebSocket 연결 관리자
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -34,81 +42,84 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        print(f"✅ WebSocket connected. Total: {len(self.active_connections)}")
+        logger.info(f"✅ WebSocket connected. Total: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-        print(f"❌ WebSocket disconnected. Total: {len(self.active_connections)}")
+        logger.info(f"❌ WebSocket disconnected. Total: {len(self.active_connections)}")
 
     async def send_to_connection(self, websocket: WebSocket, message: dict):
-        """단일 연결에 메시지 전송 (에러 처리 포함)"""
+        """단일 연결에 메시지 전송"""
         try:
             await websocket.send_json(message)
             return True
         except Exception as e:
-            print(f"Error sending to connection: {e}")
+            logger.error(f"Error sending to connection: {e}")
             return False
 
 manager = ConnectionManager()
 
 @app.websocket("/ws/realtime")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_realtime(websocket: WebSocket):
+    """실시간 가격 업데이트 WebSocket"""
     await manager.connect(websocket)
     
     try:
         while True:
-            # 실시간 가격 업데이트
             try:
-                all_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT"]
-                prices = await get_multiple_prices(all_symbols)
+                # 모든 지원 코인의 가격 가져오기
+                prices = await get_multiple_prices(settings.SUPPORTED_SYMBOLS)
                 
                 message = {
                     "type": "price_update",
                     "data": {symbol: str(price) for symbol, price in prices.items()}
                 }
                 
-                # 메시지 전송 성공 여부 확인
+                # 메시지 전송
                 success = await manager.send_to_connection(websocket, message)
                 if not success:
-                    # 전송 실패시 연결 종료
                     break
                     
             except Exception as e:
-                print(f"Error fetching prices: {e}")
+                logger.error(f"Error fetching prices: {e}")
             
             # 2초 대기
             await asyncio.sleep(2)
             
     except WebSocketDisconnect:
-        print("Client disconnected normally")
+        logger.info("Client disconnected normally")
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error: {e}")
     finally:
         manager.disconnect(websocket)
 
 @app.on_event("startup")
 async def startup_event():
+    """서버 시작 이벤트"""
     create_db_and_tables()
-    print("=" * 60)
-    print("🚀 BeenCoin API Server Started!")
-    print("=" * 60)
-    print(f"📚 API Docs: http://localhost:8000/docs")
-    print(f"🔌 WebSocket: ws://localhost:8000/ws/realtime")
-    print(f"📊 Market API: http://localhost:8000/api/v1/market/coins")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("🚀 BeenCoin API Server Started!")
+    logger.info("=" * 60)
+    logger.info(f"📚 API Docs: http://localhost:8000/docs")
+    logger.info(f"🔌 WebSocket: ws://localhost:8000/ws/realtime")
+    logger.info(f"📊 Market API: http://localhost:8000{settings.API_V1_STR}/market/coins")
+    logger.info("=" * 60)
 
 @app.get("/")
 async def root():
+    """루트 엔드포인트"""
     return {
         "message": "BeenCoin API 서버가 실행 중입니다!",
+        "version": "1.0.0",
         "docs": "/docs",
         "websocket": "/ws/realtime",
-        "market": "/api/v1/market/coins"
+        "market": f"{settings.API_V1_STR}/market/coins"
     }
 
 @app.get("/health")
 async def health_check():
+    """헬스 체크 엔드포인트"""
     return {
         "status": "healthy", 
         "version": "1.0.0",
@@ -117,4 +128,10 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        "app.main:app",
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        reload=True,
+        log_level="info"
+    )
