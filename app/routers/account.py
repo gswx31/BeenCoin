@@ -6,7 +6,6 @@ from app.services.order_service import get_account_summary, get_transaction_hist
 from app.core.database import get_session
 from app.routers.orders import get_current_user
 from typing import List
-from app.models.database import SpotAccount, SpotPosition
 
 router = APIRouter(prefix="/account", tags=["account"])
 
