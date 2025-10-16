@@ -75,8 +75,8 @@ def create_test_data(num_users: int = 3):
     try:
         from sqlmodel import Session, select
         from app.core.database import engine
-        from app.models.database import User, TradingAccount, Order, Position
-        from app.utils.security import get_password_hash
+        from app.models.database import User, SpotAccount, SpotPosition
+        from app.utils.security import hash_password
         from decimal import Decimal
         from datetime import datetime, timedelta
         import random
@@ -99,17 +99,19 @@ def create_test_data(num_users: int = 3):
                 # 사용자 생성
                 user = User(
                     username=username,
-                    hashed_password=get_password_hash("testpass123"),
-                    created_at=datetime.utcnow() - timedelta(days=random.randint(1, 30))
+                    hashed_password=hash_password("testpass123"),
+                    is_active=True,
+                    created_at=datetime.utcnow() - timedelta(days=random.randint(1, 30)),
+                    updated_at=datetime.utcnow()
                 )
                 session.add(user)
                 session.flush()
                 
-                # 계정 생성
+                # 현물 계정 생성
                 balance = Decimal(str(settings.INITIAL_BALANCE))
-                account = TradingAccount(
+                account = SpotAccount(
                     user_id=user.id,
-                    balance=balance,
+                    usdt_balance=balance,
                     total_profit=Decimal('0')
                 )
                 session.add(account)
@@ -120,13 +122,17 @@ def create_test_data(num_users: int = 3):
                     for symbol in random.sample(settings.SUPPORTED_SYMBOLS, 2):
                         quantity = Decimal(str(random.uniform(0.01, 0.5)))
                         avg_price = Decimal(str(random.uniform(30000, 50000)))
-                        position = Position(
+                        current_price = avg_price * Decimal(str(random.uniform(0.95, 1.05)))
+                        
+                        position = SpotPosition(
                             account_id=account.id,
                             symbol=symbol,
                             quantity=quantity,
                             average_price=avg_price,
-                            current_value=quantity * avg_price,
-                            unrealized_profit=Decimal('0')
+                            current_price=current_price,
+                            current_value=quantity * current_price,
+                            unrealized_profit=quantity * (current_price - avg_price),
+                            updated_at=datetime.utcnow()
                         )
                         session.add(position)
                 
@@ -158,7 +164,7 @@ def show_stats():
     try:
         from sqlmodel import Session, select, func
         from app.core.database import engine
-        from app.models.database import User, TradingAccount, Order, Position, TransactionHistory
+        from app.models.database import User, SpotAccount, Order, SpotPosition, Transaction
         
         with Session(engine) as session:
             # 사용자 통계
@@ -167,10 +173,10 @@ def show_stats():
             
             # 계정 통계
             total_balance = session.exec(
-                select(func.sum(TradingAccount.balance))
+                select(func.sum(SpotAccount.usdt_balance))
             ).one() or 0
             total_profit = session.exec(
-                select(func.sum(TradingAccount.total_profit))
+                select(func.sum(SpotAccount.total_profit))
             ).one() or 0
             
             print(f"💰 총 잔액: ${total_balance:,.2f}")
@@ -183,24 +189,26 @@ def show_stats():
             if order_count > 0:
                 order_stats = session.exec(
                     select(
-                        Order.order_status,
+                        Order.status,
                         func.count(Order.id)
-                    ).group_by(Order.order_status)
+                    ).group_by(Order.status)
                 ).all()
                 
                 for status, count in order_stats:
                     print(f"   - {status}: {count}개")
             
             # 포지션 통계
-            position_count = session.exec(select(func.count(Position.id))).one()
+            position_count = session.exec(select(func.count(SpotPosition.id))).one()
             print(f"\n📊 활성 포지션: {position_count}개")
             
             # 거래 통계
-            tx_count = session.exec(select(func.count(TransactionHistory.id))).one()
+            tx_count = session.exec(select(func.count(Transaction.id))).one()
             print(f"💱 총 거래: {tx_count}건")
             
     except Exception as e:
         print(f"\n❌ 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def backup_database():
@@ -250,8 +258,10 @@ def main():
     )
     parser.add_argument(
         'command',
+        nargs='?',
         choices=['init', 'test-data', 'stats', 'backup', 'reset'],
-        help='실행할 명령'
+        default='reset',
+        help='실행할 명령 (기본: reset)'
     )
     parser.add_argument(
         '--force',
