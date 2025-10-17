@@ -1,164 +1,178 @@
 ﻿# app/services/binance_service.py
 import httpx
-import asyncio
 from decimal import Decimal
 from typing import Dict, List
-from fastapi import HTTPException, status
-from datetime import datetime
+from app.core.config import settings
+from app.cache import cache_manager
+from fastapi import HTTPException
 import logging
 
 logger = logging.getLogger(__name__)
 
-BINANCE_API_URL = "https://api.binance.com/api/v3"
-MAX_RETRIES = 3
-RETRY_DELAY = 1
 
-async def get_current_price(symbol: str, retry_count: int = 0) -> Decimal:
-    """바이낸스 실시간 가격 조회 (재시도 로직)"""
+class BinanceAPIError(Exception):
+    """Binance API 에러"""
+    pass
+
+
+async def get_current_price(symbol: str) -> Decimal:
+    """
+    현재 가격 조회 (캐싱 적용)
+    캐시 TTL: 5초
+    """
+    cache_key = f"price:{symbol}"
+    
+    # 캐시 확인
+    cached_price = cache_manager.get(cache_key)
+    if cached_price is not None:
+        logger.debug(f"💾 캐시 히트: {symbol} = ${cached_price}")
+        return Decimal(str(cached_price))
+    
+    # API 호출
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{BINANCE_API_URL}/ticker/price",
+                f"{settings.BINANCE_API_URL}/ticker/price",
                 params={"symbol": symbol}
             )
+            response.raise_for_status()
             
-            if response.status_code == 200:
-                data = response.json()
-                price = Decimal(data['price'])
-                return price
-            else:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Binance API 오류: {response.status_code}"
-                )
-                
-    except httpx.TimeoutException:
-        if retry_count < MAX_RETRIES:
-            logger.warning(f"⏱️ Timeout, 재시도 ({retry_count + 1}/{MAX_RETRIES})...")
-            await asyncio.sleep(RETRY_DELAY * (retry_count + 1))
-            return await get_current_price(symbol, retry_count + 1)
-        else:
-            logger.error(f"❌ Timeout after {MAX_RETRIES} retries")
-            raise HTTPException(status_code=503, detail="Binance API 타임아웃")
+            data = response.json()
+            price = Decimal(data["price"])
             
+            # 캐시 저장
+            cache_manager.set(cache_key, float(price), ttl=settings.CACHE_TTL)
+            logger.debug(f"📡 API 호출: {symbol} = ${price}")
+            
+            return price
+            
+    except httpx.HTTPError as e:
+        logger.error(f"❌ Binance API 오류: {e}")
+        raise HTTPException(status_code=503, detail="시장 가격 조회 실패")
+    except KeyError:
+        logger.error(f"❌ 잘못된 응답 형식: {symbol}")
+        raise HTTPException(status_code=500, detail="가격 데이터 파싱 실패")
+
+
+async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Decimal:
+    """
+    시장가 주문 실행 (시뮬레이션)
+    실제로는 현재 가격을 반환
+    """
+    return await get_current_price(symbol)
+
+
+async def get_recent_trades(symbol: str, limit: int = 50) -> List[Dict]:
+    """최근 거래 내역 조회"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{settings.BINANCE_API_URL}/trades",
+                params={"symbol": symbol, "limit": limit}
+            )
+            response.raise_for_status()
+            return response.json()
+            
+    except httpx.HTTPError as e:
+        logger.error(f"❌ 거래 내역 조회 실패: {e}")
+        return []
+
+
+async def get_24h_ticker(symbol: str) -> Dict:
+    """24시간 티커 정보 (캐싱 적용)"""
+    cache_key = f"ticker24h:{symbol}"
+    
+    cached = cache_manager.get(cache_key)
+    if cached:
+        return cached
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{settings.BINANCE_API_URL}/ticker/24hr",
+                params={"symbol": symbol}
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            cache_manager.set(cache_key, data, ttl=settings.CACHE_TTL)
+            return data
+            
+    except httpx.HTTPError as e:
+        logger.error(f"❌ 24h 티커 조회 실패: {e}")
+        raise HTTPException(status_code=503, detail="티커 정보 조회 실패")
+
+
+async def get_coin_info(symbol: str) -> Dict:
+    """코인 정보 조회 (가격 + 24h 변동)"""
+    try:
+        ticker = await get_24h_ticker(symbol)
+        
+        return {
+            "symbol": symbol,
+            "price": ticker.get("lastPrice", "0"),
+            "change": ticker.get("priceChangePercent", "0"),
+            "volume": ticker.get("volume", "0"),
+            "high": ticker.get("highPrice", "0"),
+            "low": ticker.get("lowPrice", "0")
+        }
     except Exception as e:
-        if retry_count < MAX_RETRIES:
-            logger.warning(f"⚠️ Error, 재시도 ({retry_count + 1}/{MAX_RETRIES}): {e}")
-            await asyncio.sleep(RETRY_DELAY * (retry_count + 1))
-            return await get_current_price(symbol, retry_count + 1)
-        else:
-            logger.error(f"❌ Failed after {MAX_RETRIES} retries: {e}")
-            raise HTTPException(status_code=503, detail=f"Binance API 오류: {str(e)}")
+        logger.error(f"❌ 코인 정보 조회 실패 ({symbol}): {e}")
+        return {
+            "symbol": symbol,
+            "price": "0",
+            "change": "0",
+            "volume": "0",
+            "high": "0",
+            "low": "0"
+        }
 
 
 async def get_multiple_prices(symbols: List[str]) -> Dict[str, Decimal]:
-    """여러 코인 가격 조회"""
+    """여러 심볼의 가격 동시 조회"""
     prices = {}
     
     for symbol in symbols:
         try:
-            prices[symbol] = await get_current_price(symbol)
-        except:
-            logger.warning(f"⚠️ 가격 조회 실패: {symbol}")
-            prices[symbol] = Decimal('0')
+            price = await get_current_price(symbol)
+            prices[symbol] = price
+        except Exception as e:
+            logger.error(f"❌ {symbol} 가격 조회 실패: {e}")
+            prices[symbol] = Decimal("0")
     
     return prices
 
 
-async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Decimal:
-    """시장가 주문 실행 (현재가 반환)"""
-    price = await get_current_price(symbol)
-    logger.info(f"✅ 시장가: {side} {quantity} {symbol} @ ${price}")
-    return price
-
-
-async def get_coin_info(symbol: str) -> dict:
-    """코인 상세 정보"""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{BINANCE_API_URL}/ticker/24hr",
-                params={"symbol": symbol}
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    "symbol": data['symbol'],
-                    "price": data['lastPrice'],
-                    "change": data['priceChangePercent'],
-                    "volume": data['volume'],
-                    "high": data['highPrice'],
-                    "low": data['lowPrice'],
-                    "quoteVolume": data['quoteVolume']
-                }
-            return {}
-    except Exception as e:
-        logger.error(f"❌ 코인 정보 조회 실패: {e}")
-        return {}
-
-
-async def get_historical_data(symbol: str, interval: str, limit: int) -> List[dict]:
-    """과거 가격 데이터"""
+async def get_historical_data(symbol: str, interval: str = "1h", limit: int = 100) -> List[Dict]:
+    """과거 데이터 조회 (차트용)"""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(
-                f"{BINANCE_API_URL}/klines",
+                f"{settings.BINANCE_API_URL}/klines",
                 params={
                     "symbol": symbol,
                     "interval": interval,
                     "limit": limit
                 }
             )
+            response.raise_for_status()
             
-            if response.status_code == 200:
-                klines = response.json()
-                historical_data = []
-                for kline in klines:
-                    historical_data.append({
-                        "timestamp": datetime.fromtimestamp(kline[0] / 1000).isoformat(),
-                        "open": float(kline[1]),
-                        "high": float(kline[2]),
-                        "low": float(kline[3]),
-                        "close": float(kline[4]),
-                        "volume": float(kline[5])
-                    })
-                return historical_data
-            else:
-                return []
-    except Exception as e:
+            klines = response.json()
+            
+            # 데이터 포맷 변환
+            formatted_data = []
+            for k in klines:
+                formatted_data.append({
+                    "time": k[0],
+                    "open": float(k[1]),
+                    "high": float(k[2]),
+                    "low": float(k[3]),
+                    "close": float(k[4]),
+                    "volume": float(k[5])
+                })
+            
+            return formatted_data
+            
+    except httpx.HTTPError as e:
         logger.error(f"❌ 과거 데이터 조회 실패: {e}")
-        return []
-
-
-async def get_recent_trades(symbol: str, limit: int = 100) -> List[Dict]:
-    """바이낸스 실제 체결 내역 조회"""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{BINANCE_API_URL}/trades",
-                params={"symbol": symbol, "limit": limit}
-            )
-            
-            if response.status_code == 200:
-                trades = response.json()
-                return [
-                    {
-                        "id": trade["id"],
-                        "price": float(trade["price"]),
-                        "quantity": float(trade["qty"]),
-                        "time": trade["time"],
-                        "isBuyerMaker": trade["isBuyerMaker"]
-                    }
-                    for trade in trades
-                ]
-            else:
-                logger.error(f"❌ Binance trades API: {response.status_code}")
-                return []
-                
-    except httpx.TimeoutException:
-        logger.error(f"❌ Binance trades timeout: {symbol}")
-        return []
-    except Exception as e:
-        logger.error(f"❌ 체결 내역 조회 실패: {e}")
         return []
