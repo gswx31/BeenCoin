@@ -3,7 +3,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.models.database import create_db_and_tables
-from app.routers import auth, orders, account, market
+from app.routers import auth, orders, account, market , portfolio  # ✅ 신규 추가
 from app.services.binance_service import get_multiple_prices
 import asyncio
 import logging
@@ -33,6 +33,7 @@ app.include_router(auth.router, prefix=settings.API_V1_STR, tags=["auth"])
 app.include_router(orders.router, prefix=settings.API_V1_STR, tags=["orders"])
 app.include_router(account.router, prefix=settings.API_V1_STR, tags=["account"])
 app.include_router(market.router, prefix=settings.API_V1_STR, tags=["market"])
+app.include_router(portfolio.router, prefix=settings.API_V1_STR, tags=["portfolio"])  # ✅ 신규 추가
 
 # WebSocket 연결 관리자
 class ConnectionManager:
