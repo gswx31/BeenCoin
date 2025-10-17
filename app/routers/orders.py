@@ -12,6 +12,7 @@ import logging
 router = APIRouter(prefix="/orders", tags=["orders"])
 logger = logging.getLogger(__name__)
 
+
 @router.post("/", response_model=OrderOut)
 async def place_order(
     order: OrderCreate, 
@@ -22,13 +23,19 @@ async def place_order(
     try:
         created_order = await create_order(session, current_user.id, order)
         
+        # ✅ Enum을 문자열로 변환
+        def safe_value(field):
+            if hasattr(field, 'value'):
+                return field.value
+            return str(field) if field else None
+        
         return OrderOut(
             id=created_order.id,
             user_id=created_order.user_id,
             symbol=created_order.symbol,
-            side=created_order.side.value if hasattr(created_order.side, 'value') else created_order.side,
-            order_type=created_order.order_type.value if hasattr(created_order.order_type, 'value') else created_order.order_type,
-            status=created_order.status.value if hasattr(created_order.status, 'value') else created_order.status,
+            side=safe_value(created_order.side),
+            order_type=safe_value(created_order.order_type),
+            order_status=safe_value(created_order.status),  # ✅ status -> order_status
             quantity=float(created_order.quantity),
             price=float(created_order.price) if created_order.price else None,
             filled_quantity=float(created_order.filled_quantity),
@@ -52,26 +59,31 @@ def get_orders(
     try:
         orders = get_user_orders(session, current_user.id)
         
+        def safe_value(field):
+            if hasattr(field, 'value'):
+                return field.value
+            return str(field) if field else None
+        
         return [
             OrderOut(
-                id=o.id,
-                user_id=o.user_id,
-                symbol=o.symbol,
-                side=o.side.value if hasattr(o.side, 'value') else o.side,
-                order_type=o.order_type.value if hasattr(o.order_type, 'value') else o.order_type,
-                status=o.status.value if hasattr(o.status, 'value') else o.status,
-                quantity=float(o.quantity),
-                price=float(o.price) if o.price else None,
-                filled_quantity=float(o.filled_quantity),
-                average_price=float(o.average_price) if o.average_price else None,
-                created_at=str(o.created_at),
-                updated_at=str(o.updated_at)
+                id=order.id,
+                user_id=order.user_id,
+                symbol=order.symbol,
+                side=safe_value(order.side),
+                order_type=safe_value(order.order_type),
+                order_status=safe_value(order.status),  # ✅ status -> order_status
+                quantity=float(order.quantity),
+                price=float(order.price) if order.price else None,
+                filled_quantity=float(order.filled_quantity),
+                average_price=float(order.average_price) if order.average_price else None,
+                created_at=str(order.created_at),
+                updated_at=str(order.updated_at)
             )
-            for o in orders
+            for order in orders
         ]
     except Exception as e:
-        logger.error(f"❌ 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"조회 실패: {str(e)}")
+        logger.error(f"❌ 주문 내역 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"주문 내역 조회 실패: {str(e)}")
 
 
 @router.delete("/{order_id}")
