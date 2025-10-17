@@ -3,141 +3,126 @@ import React, { useState, useEffect } from 'react';
 import axios from '../../api/axios';
 import { toast } from 'react-toastify';
 
-const OrderForm = ({ symbol, currentPrice, orderType, onOrderTypeChange }) => {
+const OrderForm = ({ symbol, currentPrice, onOrderTypeChange, orderType = 'MARKET' }) => {
   const [side, setSide] = useState('BUY');
   const [quantity, setQuantity] = useState('');
   const [price, setPrice] = useState('');
   const [balance, setBalance] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [position, setPosition] = useState(null); // 보유 포지션 정보
   const [percentage, setPercentage] = useState(0);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     fetchBalance();
-  }, []);
-
-  useEffect(() => {
-    if (orderType === 'MARKET') {
-      setPrice(currentPrice.toString());
+    if (symbol) {
+      fetchPosition();
     }
-  }, [orderType, currentPrice]);
+  }, [symbol]);
 
   const fetchBalance = async () => {
     try {
       const response = await axios.get('/api/v1/account/');
-      setBalance(parseFloat(response.data.balance));
+      setBalance(response.data.balance);
     } catch (error) {
-      console.error('Failed to fetch balance:', error);
+      console.error('잔액 조회 실패:', error);
     }
   };
 
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  
-  const qty = parseFloat(quantity);
-  if (!qty || qty <= 0) {
-    toast.error('수량을 입력해주세요');
-    return;
-  }
+  const fetchPosition = async () => {
+    try {
+      const response = await axios.get(`/api/v1/account/positions/${symbol}`);
+      setPosition(response.data);
+    } catch (error) {
+      console.error('포지션 조회 실패:', error);
+      setPosition(null);
+    }
+  };
 
-  if (orderType === 'LIMIT' && (!price || parseFloat(price) <= 0)) {
-    toast.error('가격을 입력해주세요');
-    return;
-  }
-
-  // 잔액 검증
-  if (side === 'BUY') {
-    const orderPrice = orderType === 'MARKET' ? currentPrice : parseFloat(price);
-    const total = qty * orderPrice;
-    const fee = total * 0.001;
-    const required = total + fee;
+  const handleSubmit = async (e) => {
+    e.preventDefault();
     
-    if (balance < required) {
-      toast.error(
-        `💰 잔액 부족\n보유: $${balance.toFixed(2)}\n필요: $${required.toFixed(2)}`,
-        { autoClose: 5000 }
-      );
+    if (!quantity || parseFloat(quantity) <= 0) {
+      toast.error('수량을 입력하세요');
       return;
     }
-  }
 
-  setLoading(true);
-
-  try {
-    const orderData = {
-      symbol,
-      side,
-      order_type: orderType,
-      quantity: qty,
-    };
-
-    if (orderType === 'LIMIT') {
-      orderData.price = parseFloat(price);
+    if (orderType === 'LIMIT' && (!price || parseFloat(price) <= 0)) {
+      toast.error('가격을 입력하세요');
+      return;
     }
 
-    console.log('📤 Sending order:', orderData);
-    
-    const response = await axios.post('/api/v1/orders/', orderData);
-    
-    console.log('✅ Order response:', response.data);
-    
-    // ✅ 주문 완료 알림
-    if (orderType === 'MARKET') {
-      const fillPrice = response.data.average_price || currentPrice;
+    setLoading(true);
+
+    try {
+      const orderData = {
+        symbol: symbol,
+        side: side,
+        order_type: orderType,
+        quantity: parseFloat(quantity),
+        price: orderType === 'LIMIT' ? parseFloat(price) : undefined
+      };
+
+      const response = await axios.post('/api/v1/orders/', orderData);
+      
+      const order = response.data;
+      const qty = parseFloat(order.quantity);
+      const fillPrice = orderType === 'MARKET' ? currentPrice : parseFloat(price);
       const total = qty * fillPrice;
       
-      toast.success(
-        `🎉 ${side === 'BUY' ? '매수' : '매도'} 체결 완료!\n` +
-        `코인: ${symbol.replace('USDT', '')}\n` +
-        `수량: ${qty.toFixed(8)}\n` +
-        `가격: $${fillPrice.toFixed(2)}\n` +
-        `총액: $${total.toFixed(2)}`,
-        { 
-          autoClose: 5000,
-          position: 'top-center'
-        }
-      );
-    } else {
-      toast.success(
-        `📝 지정가 주문 등록!\n` +
-        `${side === 'BUY' ? '매수' : '매도'} ${qty.toFixed(8)} ${symbol.replace('USDT', '')}\n` +
-        `목표가: $${parseFloat(price).toFixed(2)}\n` +
-        `현재가가 목표가에 도달하면 자동으로 체결됩니다`,
-        { 
-          autoClose: 7000,
-          position: 'top-center'
-        }
-      );
+      if (order.status === 'FILLED') {
+        toast.success(
+          `✅ ${side === 'BUY' ? '매수' : '매도'} 체결 완료!\n` +
+          `코인: ${symbol.replace('USDT', '')}\n` +
+          `수량: ${qty.toFixed(8)}\n` +
+          `가격: $${fillPrice.toFixed(2)}\n` +
+          `총액: $${total.toFixed(2)}`,
+          { 
+            autoClose: 5000,
+            position: 'top-center'
+          }
+        );
+      } else {
+        toast.success(
+          `📝 지정가 주문 등록!\n` +
+          `${side === 'BUY' ? '매수' : '매도'} ${qty.toFixed(8)} ${symbol.replace('USDT', '')}\n` +
+          `목표가: $${parseFloat(price).toFixed(2)}\n` +
+          `현재가가 목표가에 도달하면 자동으로 체결됩니다`,
+          { 
+            autoClose: 7000,
+            position: 'top-center'
+          }
+        );
+      }
+      
+      setQuantity('');
+      setPrice('');
+      setPercentage(0);
+      
+      // 잔액 및 포지션 새로고침
+      await fetchBalance();
+      await fetchPosition();
+      
+    } catch (error) {
+      console.error('❌ Order error:', error);
+      
+      let errorMsg = '주문 실패';
+      
+      if (error.response?.data?.detail) {
+        errorMsg = error.response.data.detail;
+      } else if (error.response?.status === 500) {
+        errorMsg = '서버 오류가 발생했습니다';
+      } else if (error.response?.status === 400) {
+        errorMsg = '잘못된 주문입니다';
+      } else if (!error.response) {
+        errorMsg = '서버 연결 실패';
+      }
+      
+      toast.error(`❌ ${errorMsg}`, { autoClose: 5000 });
+      
+    } finally {
+      setLoading(false);
     }
-    
-    setQuantity('');
-    setPrice('');
-    setPercentage(0);
-    
-    // 잔액 새로고침
-    await fetchBalance();
-    
-  } catch (error) {
-    console.error('❌ Order error:', error);
-    
-    let errorMsg = '주문 실패';
-    
-    if (error.response?.data?.detail) {
-      errorMsg = error.response.data.detail;
-    } else if (error.response?.status === 500) {
-      errorMsg = '서버 오류가 발생했습니다';
-    } else if (error.response?.status === 400) {
-      errorMsg = '잘못된 주문입니다';
-    } else if (!error.response) {
-      errorMsg = '서버 연결 실패';
-    }
-    
-    toast.error(`❌ ${errorMsg}`, { autoClose: 5000 });
-    
-  } finally {
-    setLoading(false);
-  }
-};
-
+  };
 
   const calculateTotal = () => {
     const qty = parseFloat(quantity) || 0;
@@ -145,24 +130,28 @@ const handleSubmit = async (e) => {
     return (qty * prc).toFixed(2);
   };
 
-  // ✅ 수정: 퍼센트 계산 로직 (수수료 포함)
+  // 퍼센트 계산 (수수료 제거됨)
   const handlePercentageClick = (percent) => {
     setPercentage(percent);
     
     if (side === 'BUY') {
+      // 매수: 사용 가능한 잔액의 퍼센트만큼 계산
       const usableBalance = balance * (percent / 100);
       const calculatedPrice = orderType === 'MARKET' ? currentPrice : parseFloat(price) || currentPrice;
       
       if (calculatedPrice > 0) {
-        // ✅ 수수료 0.1%를 고려한 계산
-        // usableBalance = (price * qty) + (price * qty * 0.001)
-        // usableBalance = price * qty * 1.001
-        // qty = usableBalance / (price * 1.001)
-        const calculatedQty = usableBalance / (calculatedPrice * 1.001);
+        const calculatedQty = usableBalance / calculatedPrice;
         setQuantity(calculatedQty > 0 ? calculatedQty.toFixed(8) : '0');
       }
     } else {
-      toast.info('매도 퍼센트 기능은 포트폴리오 정보 연동 후 사용 가능합니다');
+      // 매도: 주문 가능 수량의 퍼센트만큼 계산
+      if (position && position.available_quantity > 0) {
+        const calculatedQty = position.available_quantity * (percent / 100);
+        setQuantity(calculatedQty > 0 ? calculatedQty.toFixed(8) : '0');
+      } else {
+        toast.warning('매도 가능한 수량이 없습니다');
+        setQuantity('0');
+      }
     }
   };
 
@@ -176,13 +165,14 @@ const handleSubmit = async (e) => {
     <div className="bg-gray-800 rounded-lg p-6">
       <h2 className="text-xl font-bold mb-6">주문하기</h2>
 
+      {/* 주문 타입 선택 */}
       <div className="flex space-x-2 mb-6">
         <button
           onClick={() => onOrderTypeChange('MARKET')}
           className={`flex-1 py-2 rounded-lg transition-colors ${
             orderType === 'MARKET' 
-              ? 'bg-accent text-white' 
-              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+              ? 'bg-accent text-dark font-semibold' 
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
         >
           시장가
@@ -191,138 +181,168 @@ const handleSubmit = async (e) => {
           onClick={() => onOrderTypeChange('LIMIT')}
           className={`flex-1 py-2 rounded-lg transition-colors ${
             orderType === 'LIMIT' 
-              ? 'bg-accent text-white' 
-              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+              ? 'bg-accent text-dark font-semibold' 
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
         >
           지정가
         </button>
       </div>
 
+      {/* 매수/매도 선택 */}
       <div className="flex space-x-2 mb-6">
         <button
           onClick={() => setSide('BUY')}
-          className={`flex-1 py-2 rounded-lg transition-colors ${
+          className={`flex-1 py-3 rounded-lg font-semibold transition-colors ${
             side === 'BUY' 
               ? 'bg-green-600 text-white' 
-              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
         >
           매수
         </button>
         <button
           onClick={() => setSide('SELL')}
-          className={`flex-1 py-2 rounded-lg transition-colors ${
+          className={`flex-1 py-3 rounded-lg font-semibold transition-colors ${
             side === 'SELL' 
               ? 'bg-red-600 text-white' 
-              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
           }`}
         >
           매도
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {orderType === 'LIMIT' && (
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">가격 (USDT)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              className="w-full p-3 bg-gray-700 rounded-lg border border-gray-600 focus:outline-none focus:border-accent"
-              placeholder="주문 가격"
-              required
-            />
+      {/* 포지션 정보 (매도 시에만 표시) */}
+      {side === 'SELL' && position && position.quantity > 0 && (
+        <div className="bg-gray-700 rounded-lg p-4 mb-4 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">보유 수량:</span>
+            <span className="text-white font-semibold">{position.quantity.toFixed(8)}</span>
           </div>
-        )}
-
-        <div>
-          <label className="block text-sm text-gray-400 mb-2">수량</label>
-          <div className="flex items-center space-x-2">
-            <button
-              type="button"
-              onClick={() => adjustQuantity(-0.001)}
-              className="px-4 py-3 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors font-bold"
-            >
-              −
-            </button>
-            <input
-              type="number"
-              step="0.00000001"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              className="flex-1 p-3 bg-gray-700 rounded-lg border border-gray-600 focus:outline-none focus:border-accent text-center"
-              placeholder="주문 수량"
-              required
-            />
-            <button
-              type="button"
-              onClick={() => adjustQuantity(0.001)}
-              className="px-4 py-3 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors font-bold"
-            >
-              +
-            </button>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">미체결 주문:</span>
+            <span className="text-yellow-400">{position.locked_quantity.toFixed(8)}</span>
+          </div>
+          <div className="flex justify-between text-sm border-t border-gray-600 pt-2">
+            <span className="text-gray-400">주문 가능:</span>
+            <span className="text-green-400 font-bold">{position.available_quantity.toFixed(8)}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-400">평균 매수가:</span>
+            <span className="text-white">${position.average_price.toFixed(2)}</span>
           </div>
         </div>
+      )}
 
-        <div>
+      {/* 가격 입력 (지정가만) */}
+      {orderType === 'LIMIT' && (
+        <div className="mb-4">
           <label className="block text-sm text-gray-400 mb-2">
-            {side === 'BUY' ? '잔액 비율' : '보유량 비율'}
+            주문 가격 (USDT)
           </label>
-          <div className="grid grid-cols-4 gap-2">
-            {[25, 50, 75, 100].map((percent) => (
-              <button
-                key={percent}
-                type="button"
-                onClick={() => handlePercentageClick(percent)}
-                className={`py-2 rounded-lg transition-colors font-semibold ${
-                  percentage === percent
-                    ? 'bg-accent text-white'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                }`}
-              >
-                {percent}%
-              </button>
-            ))}
-          </div>
+          <input
+            type="number"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            placeholder="가격 입력"
+            className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-accent"
+            step="0.01"
+          />
         </div>
+      )}
 
-        <div className="bg-gray-700 rounded-lg p-4 space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-400">보유 현금</span>
-            <span className="font-semibold">${balance.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-400">주문 총액</span>
-            <span className="font-semibold">${calculateTotal()}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-400">예상 수수료 (0.1%)</span>
-            <span className="font-semibold text-yellow-400">
-              ${(parseFloat(calculateTotal()) * 0.001).toFixed(2)}
-            </span>
-          </div>
-          {orderType === 'MARKET' && (
-            <div className="text-xs text-gray-500 mt-2">
-              * 시장가 주문은 즉시 현재가로 체결됩니다
-            </div>
-          )}
+      {/* 수량 입력 */}
+      <div className="mb-4">
+        <label className="block text-sm text-gray-400 mb-2">
+          주문 수량
+        </label>
+        <div className="flex space-x-2">
+          <input
+            type="number"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            placeholder="수량 입력"
+            className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-accent"
+            step="0.00000001"
+          />
+          <button
+            onClick={() => adjustQuantity(0.01)}
+            className="bg-gray-700 hover:bg-gray-600 px-4 rounded-lg"
+          >
+            +
+          </button>
+          <button
+            onClick={() => adjustQuantity(-0.01)}
+            className="bg-gray-700 hover:bg-gray-600 px-4 rounded-lg"
+          >
+            -
+          </button>
         </div>
+      </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className={`w-full py-3 rounded-lg font-semibold transition-colors ${
-            side === 'BUY'
-              ? 'bg-green-600 hover:bg-green-700'
-              : 'bg-red-600 hover:bg-red-700'
-          } disabled:opacity-50 disabled:cursor-not-allowed`}
-        >
-          {loading ? '처리 중...' : side === 'BUY' ? '매수하기' : '매도하기'}
-        </button>
-      </form>
+      {/* 퍼센트 버튼 */}
+      <div className="grid grid-cols-4 gap-2 mb-6">
+        {[25, 50, 75, 100].map((pct) => (
+          <button
+            key={pct}
+            onClick={() => handlePercentageClick(pct)}
+            className={`py-2 rounded-lg transition-colors ${
+              percentage === pct
+                ? 'bg-accent text-dark font-semibold'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            {pct}%
+          </button>
+        ))}
+      </div>
+
+      {/* 주문 정보 요약 */}
+      <div className="bg-gray-700 rounded-lg p-4 mb-6 space-y-2">
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-400">
+            {side === 'BUY' ? '사용 가능 잔액:' : '주문 가능 수량:'}
+          </span>
+          <span className="text-white font-semibold">
+            {side === 'BUY' 
+              ? `$${balance.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}`
+              : position 
+                ? `${position.available_quantity.toFixed(8)} ${symbol.replace('USDT', '')}`
+                : '0.00000000'
+            }
+          </span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-gray-400">주문 금액:</span>
+          <span className="text-accent font-semibold">${calculateTotal()}</span>
+        </div>
+      </div>
+
+      {/* 주문 버튼 */}
+      <button
+        onClick={handleSubmit}
+        disabled={loading}
+        className={`w-full py-4 rounded-lg font-bold text-lg transition-colors ${
+          side === 'BUY'
+            ? 'bg-green-600 hover:bg-green-700 text-white'
+            : 'bg-red-600 hover:bg-red-700 text-white'
+        } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+      >
+        {loading ? '처리 중...' : `${side === 'BUY' ? '매수' : '매도'} 주문`}
+      </button>
+
+      {/* 안내 메시지 */}
+      {orderType === 'MARKET' && (
+        <p className="text-xs text-gray-500 mt-4 text-center">
+          시장가 주문은 즉시 체결됩니다
+        </p>
+      )}
+      {orderType === 'LIMIT' && (
+        <p className="text-xs text-gray-500 mt-4 text-center">
+          지정가 주문은 목표가 도달 시 자동 체결됩니다
+        </p>
+      )}
     </div>
   );
 };

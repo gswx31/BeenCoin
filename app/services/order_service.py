@@ -1,63 +1,39 @@
-# app/services/order_service.py
+# app/services/order_service.py - 수수료 제거 버전
 from sqlmodel import Session, select
+from fastapi import HTTPException
+from decimal import Decimal
+from datetime import datetime
+import asyncio
+from typing import List
+
 from app.models.database import (
     Order, SpotAccount, SpotPosition, Transaction,
-    OrderSide, OrderStatus, TradingType
+    OrderSide, OrderStatus, OrderType, TradingType
 )
-from app.services.binance_service import get_current_price, execute_market_order, get_recent_trades
-from decimal import Decimal, InvalidOperation
 from app.schemas.order import OrderCreate
-from fastapi import HTTPException
-from datetime import datetime
-import logging
-import asyncio
-
-logger = logging.getLogger(__name__)
+from app.services.binance_service import get_current_price, get_recent_trades
+from app.utils.logger import logger
 
 
-async def create_order(session: Session, user_id: int, order_data: OrderCreate) -> Order:
-    """주문 생성 및 처리 (수수료 없음)"""
+async def create_order(
+    session: Session,
+    user_id: int,
+    order_data: OrderCreate
+) -> Order:
+    """
+    주문 생성 (수수료 없음)
+    """
+    # 수량과 가격 검증
+    quantity = Decimal(str(order_data.quantity))
+    price = Decimal(str(order_data.price)) if order_data.price else None
     
-    # 입력 검증
-    try:
-        quantity = Decimal(str(order_data.quantity))
-        if quantity <= 0:
-            raise ValueError("수량은 0보다 커야 합니다")
-        
-        price = None
-        if order_data.price:
-            price = Decimal(str(order_data.price))
-            if price <= 0:
-                raise ValueError("가격은 0보다 커야 합니다")
-    except (ValueError, InvalidOperation) as e:
-        raise HTTPException(status_code=400, detail=f"잘못된 입력: {str(e)}")
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="수량은 0보다 커야 합니다")
     
-    # 계정 조회
-    account = session.exec(
-        select(SpotAccount).where(SpotAccount.user_id == user_id)
-    ).first()
+    if order_data.order_type == OrderType.LIMIT and (not price or price <= 0):
+        raise HTTPException(status_code=400, detail="지정가 주문은 가격이 필요합니다")
     
-    if not account:
-        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
-    
-    # 시장가 매수 - 사전 잔액 검증
-    if order_data.order_type == 'MARKET' and order_data.side == OrderSide.BUY:
-        try:
-            estimated_price = await get_current_price(order_data.symbol)
-            required = estimated_price * quantity
-            
-            if account.usdt_balance < required:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"잔액 부족: 보유 ${float(account.usdt_balance):.2f} / 필요 ${float(required):.2f}"
-                )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"❌ 가격 조회 실패: {e}")
-            raise HTTPException(status_code=503, detail="시장 가격 조회 실패")
-    
-    # 주문 생성
+    # 주문 객체 생성
     order = Order(
         user_id=user_id,
         trading_type=TradingType.SPOT,
@@ -83,10 +59,10 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
         raise HTTPException(status_code=500, detail="주문 생성 실패")
     
     # 시장가 주문 즉시 체결
-    if order.order_type == 'MARKET':
+    if order.order_type == OrderType.MARKET:
         try:
-            current_price = await execute_market_order(order.symbol, order.side, quantity)
-            _fill_order(session, order, current_price, quantity)
+            current_price = await get_current_price(order.symbol)
+            _fill_order(session, order, Decimal(str(current_price)), quantity)
             session.refresh(order)
             logger.info(f"✅ 시장가 체결: ID={order.id}, ${current_price}")
             
@@ -104,7 +80,7 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
             raise HTTPException(status_code=500, detail=f"주문 체결 실패: {str(e)}")
     
     # 지정가 주문 모니터링
-    elif order.order_type == 'LIMIT':
+    elif order.order_type == OrderType.LIMIT:
         if not price:
             raise HTTPException(status_code=400, detail="지정가 주문은 가격이 필요합니다")
         
@@ -117,7 +93,15 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
 
 
 def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decimal):
-    """주문 체결 처리 (수수료 없음)"""
+    """
+    주문 체결 처리 (수수료 없음)
+    
+    Args:
+        session: 데이터베이스 세션
+        order: 주문 객체
+        price: 체결 가격
+        quantity: 체결 수량
+    """
     
     try:
         # 계정 조회
@@ -151,7 +135,7 @@ def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decima
         
         # 매수 처리
         if order.side == OrderSide.BUY:
-            total_cost = price * quantity
+            total_cost = price * quantity  # 수수료 없음
             
             if account.usdt_balance < total_cost:
                 raise HTTPException(
@@ -177,7 +161,7 @@ def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decima
                 )
             
             position.quantity -= quantity
-            proceeds = price * quantity
+            proceeds = price * quantity  # 수수료 없음
             profit = (price - position.average_price) * quantity
             
             account.usdt_balance += proceeds
@@ -191,7 +175,7 @@ def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decima
         order.status = OrderStatus.FILLED
         order.updated_at = datetime.utcnow()
         
-        # 거래 내역 기록
+        # 거래 내역 기록 (수수료 0)
         transaction = Transaction(
             user_id=order.user_id,
             order_id=order.id,
@@ -236,11 +220,13 @@ async def _monitor_limit_order(
     target_price: Decimal,
     user_id: int
 ):
-    """지정가 주문 모니터링"""
+    """
+    지정가 주문 모니터링
+    """
     from app.core.database import engine
     
-    max_duration = 24 * 3600
-    check_interval = 2
+    max_duration = 24 * 3600  # 24시간
+    check_interval = 2  # 2초
     elapsed_time = 0
     last_trade_id = None
     
@@ -249,6 +235,7 @@ async def _monitor_limit_order(
     try:
         while elapsed_time < max_duration:
             try:
+                # 최근 거래 조회
                 trades = await get_recent_trades(symbol, limit=50)
                 
                 if trades:
@@ -258,137 +245,97 @@ async def _monitor_limit_order(
                     if trades:
                         last_trade_id = max(t['id'] for t in trades)
                     
+                    # 거래 확인
                     for trade in trades:
                         trade_price = Decimal(str(trade['price']))
                         
                         should_fill = False
                         
+                        # 매수: 시장가가 목표가 이하로 떨어지면 체결
                         if side == OrderSide.BUY and trade_price <= target_price:
                             should_fill = True
                             logger.info(f"💰 매수 조건 충족: ${trade_price} <= ${target_price}")
                         
+                        # 매도: 시장가가 목표가 이상으로 올라가면 체결
                         elif side == OrderSide.SELL and trade_price >= target_price:
                             should_fill = True
                             logger.info(f"💸 매도 조건 충족: ${trade_price} >= ${target_price}")
                         
+                        # 체결 처리
                         if should_fill:
-                            with Session(engine) as new_session:
-                                order = new_session.get(Order, order_id)
+                            with Session(engine) as session:
+                                order = session.exec(
+                                    select(Order).where(Order.id == order_id)
+                                ).first()
+                                
                                 if order and order.status == OrderStatus.PENDING:
-                                    _fill_order(new_session, order, trade_price, quantity)
-                                    logger.info(f"✅ 지정가 체결: ID={order_id} @ ${trade_price}")
-                            return
+                                    _fill_order(session, order, target_price, quantity)
+                                    logger.info(f"✅ 지정가 체결: Order ID={order_id}")
+                                    return
                 
                 await asyncio.sleep(check_interval)
                 elapsed_time += check_interval
                 
             except Exception as e:
-                logger.error(f"❌ 모니터링 체크 오류: {e}")
-                await asyncio.sleep(5)
-                elapsed_time += 5
+                logger.error(f"❌ 모니터링 오류: {e}")
+                await asyncio.sleep(check_interval)
+                elapsed_time += check_interval
         
-        # 24시간 만료
-        with Session(engine) as new_session:
-            order = new_session.get(Order, order_id)
+        # 만료 처리
+        with Session(engine) as session:
+            order = session.exec(
+                select(Order).where(Order.id == order_id)
+            ).first()
+            
             if order and order.status == OrderStatus.PENDING:
                 order.status = OrderStatus.EXPIRED
                 order.updated_at = datetime.utcnow()
-                new_session.add(order)
-                new_session.commit()
-                logger.warning(f"⏰ 주문 만료: ID={order_id}")
+                session.add(order)
+                session.commit()
+                logger.info(f"⏰ 주문 만료: Order ID={order_id}")
                 
     except Exception as e:
-        logger.error(f"❌ 모니터링 중단: {e}")
+        logger.error(f"❌ 모니터링 실패: {e}")
 
 
-def cancel_order(session: Session, user_id: int, order_id: int) -> dict:
-    """주문 취소"""
-    try:
-        order = session.get(Order, order_id)
-        
-        if not order:
-            raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
-        
-        if order.user_id != user_id:
-            raise HTTPException(status_code=403, detail="권한이 없습니다")
-        
-        if order.status != OrderStatus.PENDING:
-            raise HTTPException(status_code=400, detail="취소할 수 없는 주문입니다")
-        
-        order.status = OrderStatus.CANCELLED
-        order.updated_at = datetime.utcnow()
-        session.add(order)
-        session.commit()
-        
-        logger.info(f"🚫 주문 취소: ID={order_id}")
-        
-        return {"message": "주문이 취소되었습니다"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ 주문 취소 실패: {e}")
-        raise HTTPException(status_code=500, detail="주문 취소 실패")
+def get_user_orders(session: Session, user_id: int, limit: int = 50) -> List[Order]:
+    """
+    사용자 주문 목록 조회
+    """
+    orders = session.exec(
+        select(Order)
+        .where(Order.user_id == user_id)
+        .order_by(Order.created_at.desc())
+        .limit(limit)
+    ).all()
+    
+    return orders
 
 
-def get_user_orders(session: Session, user_id: int, limit: int = 100):
-    """사용자 주문 내역 조회"""
-    try:
-        return session.exec(
-            select(Order)
-            .where(Order.user_id == user_id)
-            .order_by(Order.created_at.desc())
-            .limit(limit)
-        ).all()
-    except Exception as e:
-        logger.error(f"❌ 주문 내역 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail="주문 내역 조회 실패")
-
-
-def get_account_summary(session: Session, user_id: int) -> dict:
-    """계정 요약 정보"""
-    try:
-        account = session.exec(
-            select(SpotAccount).where(SpotAccount.user_id == user_id)
-        ).first()
-        
-        if not account:
-            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
-        
-        positions = session.exec(
-            select(SpotPosition).where(SpotPosition.account_id == account.id)
-        ).all()
-        
-        total_value = account.usdt_balance
-        for pos in positions:
-            total_value += pos.current_value
-        
-        return {
-            "balance": float(account.usdt_balance),
-            "total_value": float(total_value),
-            "total_profit": float(account.total_profit),
-            "positions_count": len(positions)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ 계정 요약 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail="계정 요약 조회 실패")
-
-
-def get_transaction_history(session: Session, user_id: int, limit: int = 100):
-    """거래 내역 조회"""
-    try:
-        transactions = session.exec(
-            select(Transaction)
-            .where(Transaction.user_id == user_id)
-            .order_by(Transaction.timestamp.desc())
-            .limit(limit)
-        ).all()
-        
-        return transactions
-        
-    except Exception as e:
-        logger.error(f"❌ 거래 내역 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail="거래 내역 조회 실패")    
+def cancel_order(session: Session, order_id: int, user_id: int) -> Order:
+    """
+    주문 취소
+    """
+    order = session.exec(
+        select(Order).where(
+            Order.id == order_id,
+            Order.user_id == user_id
+        )
+    ).first()
+    
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    
+    if order.status != OrderStatus.PENDING:
+        raise HTTPException(status_code=400, detail="대기 중인 주문만 취소할 수 있습니다")
+    
+    order.status = OrderStatus.CANCELLED
+    order.updated_at = datetime.utcnow()
+    
+    session.add(order)
+    session.commit()
+    session.refresh(order)
+    
+    logger.info(f"❌ 주문 취소: Order ID={order_id}")
+    
+    return order
