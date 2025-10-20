@@ -5,10 +5,10 @@ from app.core.config import settings
 from app.core.database import create_db_and_tables
 from app.routers import auth, orders, account, market
 from app.services.binance_service import get_multiple_prices
-from app.cache import cache_manager
+from app.cache.cache_manager import cache_manager  # ✅ 직접 import
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone  # ✅ timezone 추가
 
 # 로깅 설정
 logging.basicConfig(
@@ -52,8 +52,19 @@ async def startup_event():
         logger.error(f"❌ Database initialization failed: {e}")
         raise
     
-    # 캐시 통계
-    logger.info(f"💾 Cache system initialized (TTL: {settings.CACHE_TTL}s)")
+    # 캐시 시스템 확인
+    try:
+        test_key = "startup_test"
+        cache_manager.set(test_key, "test_value", ttl=1)
+        test_value = cache_manager.get(test_key)
+        if test_value == "test_value":
+            logger.info("✅ Cache system verified")
+        else:
+            logger.warning("⚠️ Cache system verification failed")
+    except Exception as e:
+        logger.error(f"❌ Cache system error: {e}")
+    
+    logger.info(f"💾 Cache TTL: {settings.CACHE_TTL}s")
     
     # 설정 출력
     logger.info(f"📊 Supported symbols: {', '.join(settings.SUPPORTED_SYMBOLS)}")
@@ -71,6 +82,10 @@ async def startup_event():
 async def shutdown_event():
     """서버 종료 시 실행"""
     logger.info("🛑 Shutting down...")
+    
+    # 활성 WebSocket 연결 정리
+    logger.info(f"🔌 Closing {len(manager.active_connections)} WebSocket connections...")
+    await manager.disconnect_all()
     
     # 캐시 정리
     stats = cache_manager.get_stats()
@@ -94,7 +109,7 @@ def root():
     return {
         "message": f"{settings.PROJECT_NAME} v{settings.VERSION}",
         "status": "running",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),  # ✅ 수정
         "docs": "/docs",
         "features": [
             "실시간 암호화폐 거래",
@@ -109,13 +124,18 @@ def root():
 @app.get("/health")
 def health_check():
     """서버 상태 확인"""
-    cache_stats = cache_manager.get_stats()
+    try:
+        cache_stats = cache_manager.get_stats()
+    except Exception as e:
+        logger.error(f"Cache stats error: {e}")
+        cache_stats = {"error": str(e)}
     
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),  # ✅ 수정
         "version": settings.VERSION,
-        "cache": cache_stats
+        "cache": cache_stats,
+        "websocket_connections": len(manager.active_connections)
     }
 
 
@@ -134,13 +154,36 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
         logger.info(f"❌ WebSocket disconnected. Total: {len(self.active_connections)}")
 
+    async def disconnect_all(self):
+        """모든 WebSocket 연결 종료"""
+        for connection in self.active_connections[:]:
+            try:
+                await connection.close()
+            except Exception as e:
+                logger.debug(f"Error closing connection: {e}")
+        self.active_connections.clear()
+
     async def broadcast(self, message: dict):
-        """모든 연결에 브로드캐스트"""
+        """모든 연결에 브로드캐스트 (연결 상태 확인 포함)"""
+        disconnected = []
+        
         for connection in self.active_connections:
             try:
-                await connection.send_json(message)
+                # 연결이 열려있는지 확인
+                if hasattr(connection, 'client_state') and connection.client_state.name == "CONNECTED":
+                    await connection.send_json(message)
+                elif hasattr(connection, 'application_state'):
+                    # 다른 WebSocket 구현의 경우
+                    await connection.send_json(message)
+                else:
+                    disconnected.append(connection)
             except Exception as e:
-                logger.error(f"❌ Broadcast error: {e}")
+                logger.debug(f"Broadcast error: {e}")
+                disconnected.append(connection)
+        
+        # 끊어진 연결 제거
+        for conn in disconnected:
+            self.disconnect(conn)
 
 
 manager = ConnectionManager()
@@ -158,20 +201,24 @@ async def websocket_realtime(websocket: WebSocket):
     try:
         while True:
             # 모든 코인 가격 조회
-            prices = await get_multiple_prices(settings.SUPPORTED_SYMBOLS)
-            
-            # 데이터 포맷
-            data = {
-                "type": "price_update",
-                "timestamp": datetime.utcnow().isoformat(),
-                "prices": {
-                    symbol: float(price) 
-                    for symbol, price in prices.items()
+            try:
+                prices = await get_multiple_prices(settings.SUPPORTED_SYMBOLS)
+                
+                # 데이터 포맷
+                data = {
+                    "type": "price_update",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),  # ✅ 수정
+                    "prices": {
+                        symbol: float(price) 
+                        for symbol, price in prices.items()
+                    }
                 }
-            }
-            
-            # 브로드캐스트
-            await manager.broadcast(data)
+                
+                # 브로드캐스트
+                await manager.broadcast(data)
+                
+            except Exception as e:
+                logger.error(f"❌ Error fetching prices: {e}")
             
             # 2초 대기
             await asyncio.sleep(2)
@@ -179,6 +226,9 @@ async def websocket_realtime(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         logger.info("WebSocket disconnected normally")
+    except asyncio.CancelledError:
+        manager.disconnect(websocket)
+        logger.info("WebSocket cancelled during shutdown")
     except Exception as e:
         logger.error(f"❌ WebSocket error: {e}")
         manager.disconnect(websocket)

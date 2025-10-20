@@ -17,13 +17,14 @@ const Portfolio = () => {
       return;
     }
     fetchPortfolio();
-    const interval = setInterval(fetchPortfolio, 5000); // 5초마다 갱신
+    const interval = setInterval(fetchPortfolio, 5000);
     return () => clearInterval(interval);
   }, [isAuthenticated, navigate]);
 
   const fetchPortfolio = async () => {
     try {
       const response = await axios.get('/api/v1/account/');
+      console.log('📊 Portfolio data:', response.data); // 디버깅용
       setPortfolio(response.data);
       setLoading(false);
     } catch (error) {
@@ -47,12 +48,25 @@ const Portfolio = () => {
     return (
       <div className="text-center text-gray-400 py-8">
         <p>포트폴리오를 불러올 수 없습니다</p>
+        <button 
+          onClick={fetchPortfolio}
+          className="mt-4 bg-accent px-4 py-2 rounded text-dark font-semibold"
+        >
+          다시 시도
+        </button>
       </div>
     );
   }
 
-  const profitColor = portfolio.total_profit >= 0 ? 'text-green-400' : 'text-red-400';
-  const profitSign = portfolio.total_profit >= 0 ? '+' : '';
+  // ✅ 안전한 값 처리
+  const totalValue = portfolio.total_value ?? 0;
+  const balance = portfolio.balance ?? 0;
+  const totalProfit = portfolio.total_profit ?? 0;
+  const profitRate = portfolio.profit_rate ?? 0;
+  const positions = portfolio.positions ?? [];
+
+  const profitColor = totalProfit >= 0 ? 'text-green-400' : 'text-red-400';
+  const profitSign = totalProfit >= 0 ? '+' : '';
 
   return (
     <div className="space-y-6">
@@ -63,28 +77,28 @@ const Portfolio = () => {
         <div className="bg-gray-800 rounded-lg p-6">
           <p className="text-sm text-gray-400 mb-2">총 자산</p>
           <p className="text-2xl font-bold text-accent">
-            ${portfolio.total_value?.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
+            ${totalValue.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
           </p>
         </div>
 
         <div className="bg-gray-800 rounded-lg p-6">
           <p className="text-sm text-gray-400 mb-2">보유 현금</p>
           <p className="text-2xl font-bold">
-            ${portfolio.balance?.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
+            ${balance.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
           </p>
         </div>
 
         <div className="bg-gray-800 rounded-lg p-6">
-          <p className="text-sm text-gray-400 mb-2">실현 손익</p>
+          <p className="text-sm text-gray-400 mb-2">총 손익</p>
           <p className={`text-2xl font-bold ${profitColor}`}>
-            {profitSign}${Math.abs(portfolio.total_profit)?.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
+            {profitSign}${Math.abs(totalProfit).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
           </p>
         </div>
 
         <div className="bg-gray-800 rounded-lg p-6">
           <p className="text-sm text-gray-400 mb-2">수익률</p>
           <p className={`text-2xl font-bold ${profitColor}`}>
-            {profitSign}{portfolio.profit_rate?.toFixed(2)}%
+            {profitSign}{profitRate.toFixed(2)}%
           </p>
         </div>
       </div>
@@ -93,15 +107,13 @@ const Portfolio = () => {
       <div className="bg-gray-800 rounded-lg p-6">
         <h2 className="text-xl font-bold mb-4">보유 코인</h2>
         
-        {portfolio.positions && portfolio.positions.length > 0 ? (
+        {positions.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="text-gray-400 border-b border-gray-700">
                   <th className="text-left py-3 px-4">코인</th>
                   <th className="text-right py-3 px-4">보유량</th>
-                  <th className="text-right py-3 px-4">미체결</th>
-                  <th className="text-right py-3 px-4">주문가능</th>
                   <th className="text-right py-3 px-4">평균가</th>
                   <th className="text-right py-3 px-4">현재가</th>
                   <th className="text-right py-3 px-4">평가액</th>
@@ -110,46 +122,49 @@ const Portfolio = () => {
                 </tr>
               </thead>
               <tbody>
-                {portfolio.positions.map((pos) => {
-                  const profitColor = pos.unrealized_profit >= 0 
+                {positions.map((pos, index) => {
+                  // ✅ 각 필드 안전 처리
+                  const symbol = pos.symbol || 'UNKNOWN';
+                  const quantity = pos.quantity ?? 0;
+                  const averagePrice = pos.average_price ?? 0;
+                  const currentPrice = pos.current_price ?? 0;
+                  const currentValue = pos.current_value ?? 0;
+                  const unrealizedProfit = pos.unrealized_profit ?? 0;
+                  const positionProfitRate = pos.profit_rate ?? 0;
+                  
+                  const positionProfitColor = unrealizedProfit >= 0 
                     ? 'text-green-400' 
                     : 'text-red-400';
-                  const profitSign = pos.unrealized_profit >= 0 ? '+' : '';
+                  const positionProfitSign = unrealizedProfit >= 0 ? '+' : '';
                   
                   return (
                     <tr 
-                      key={pos.id} 
+                      key={index}
                       className="border-b border-gray-700 hover:bg-gray-750 transition-colors"
                     >
                       <td className="py-4 px-4">
                         <div className="font-semibold text-white">
-                          {pos.symbol.replace('USDT', '')}
+                          {symbol.replace('USDT', '')}
                         </div>
-                        <div className="text-xs text-gray-500">{pos.symbol}</div>
+                        <div className="text-xs text-gray-500">{symbol}</div>
                       </td>
                       <td className="text-right py-4 px-4 text-white">
-                        {pos.quantity.toFixed(8)}
-                      </td>
-                      <td className="text-right py-4 px-4 text-yellow-400">
-                        {pos.locked_quantity.toFixed(8)}
-                      </td>
-                      <td className="text-right py-4 px-4 text-green-400 font-semibold">
-                        {pos.available_quantity.toFixed(8)}
+                        {quantity.toFixed(8)}
                       </td>
                       <td className="text-right py-4 px-4 text-gray-300">
-                        ${pos.average_price.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
+                        ${averagePrice.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
                       </td>
                       <td className="text-right py-4 px-4 text-white">
-                        ${pos.current_price.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
+                        ${currentPrice.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
                       </td>
                       <td className="text-right py-4 px-4 text-white font-semibold">
-                        ${pos.current_value.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
+                        ${currentValue.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
                       </td>
-                      <td className={`text-right py-4 px-4 font-semibold ${profitColor}`}>
-                        {profitSign}${Math.abs(pos.unrealized_profit).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
+                      <td className={`text-right py-4 px-4 font-semibold ${positionProfitColor}`}>
+                        {positionProfitSign}${Math.abs(unrealizedProfit).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}
                       </td>
-                      <td className={`text-right py-4 px-4 font-bold ${profitColor}`}>
-                        {profitSign}{pos.profit_rate.toFixed(2)}%
+                      <td className={`text-right py-4 px-4 font-bold ${positionProfitColor}`}>
+                        {positionProfitSign}{positionProfitRate.toFixed(2)}%
                       </td>
                     </tr>
                   );
@@ -195,23 +210,41 @@ const Portfolio = () => {
             <span>현재 보유하고 있는 총 코인 수량</span>
           </div>
           <div className="flex">
-            <span className="font-semibold text-yellow-400 w-32">미체결:</span>
-            <span>현재 대기 중인 매도 주문에 묶여있는 수량</span>
-          </div>
-          <div className="flex">
-            <span className="font-semibold text-green-400 w-32">주문가능:</span>
-            <span>즉시 매도 주문을 낼 수 있는 수량 (보유량 - 미체결)</span>
-          </div>
-          <div className="flex">
             <span className="font-semibold text-white w-32">평균가:</span>
             <span>코인을 매수한 평균 가격</span>
+          </div>
+          <div className="flex">
+            <span className="font-semibold text-white w-32">현재가:</span>
+            <span>실시간 시장 가격</span>
           </div>
           <div className="flex">
             <span className="font-semibold text-white w-32">평가액:</span>
             <span>현재가 기준으로 계산한 보유 코인의 총 가치</span>
           </div>
+          <div className="flex">
+            <span className="font-semibold text-green-400 w-32">손익:</span>
+            <span>평가액 - 투자금액 (미실현 손익)</span>
+          </div>
+          <div className="flex">
+            <span className="font-semibold text-green-400 w-32">수익률:</span>
+            <span>(손익 / 투자금액) × 100%</span>
+          </div>
         </div>
       </div>
+
+      {/* 디버깅 정보 (개발 환경에서만) */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="bg-gray-900 rounded-lg p-4 text-xs">
+          <details>
+            <summary className="cursor-pointer text-gray-400 hover:text-white">
+              🔍 디버깅 정보 (개발용)
+            </summary>
+            <pre className="mt-2 text-gray-500 overflow-auto">
+              {JSON.stringify(portfolio, null, 2)}
+            </pre>
+          </details>
+        </div>
+      )}
     </div>
   );
 };

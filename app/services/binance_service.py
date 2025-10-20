@@ -3,7 +3,7 @@ import httpx
 from decimal import Decimal
 from typing import Dict, List
 from app.core.config import settings
-from app.cache import cache_manager
+from app.cache.cache_manager import cache_manager  # ✅ 직접 import
 from fastapi import HTTPException
 import logging
 
@@ -23,10 +23,13 @@ async def get_current_price(symbol: str) -> Decimal:
     cache_key = f"price:{symbol}"
     
     # 캐시 확인
-    cached_price = cache_manager.get(cache_key)
-    if cached_price is not None:
-        logger.debug(f"💾 캐시 히트: {symbol} = ${cached_price}")
-        return Decimal(str(cached_price))
+    try:
+        cached_price = cache_manager.get(cache_key)
+        if cached_price is not None:
+            logger.debug(f"💾 캐시 히트: {symbol} = ${cached_price}")
+            return Decimal(str(cached_price))
+    except Exception as e:
+        logger.warning(f"⚠️ 캐시 읽기 실패: {e}")
     
     # API 호출
     try:
@@ -41,17 +44,44 @@ async def get_current_price(symbol: str) -> Decimal:
             price = Decimal(data["price"])
             
             # 캐시 저장
-            cache_manager.set(cache_key, float(price), ttl=settings.CACHE_TTL)
-            logger.debug(f"📡 API 호출: {symbol} = ${price}")
+            try:
+                cache_manager.set(cache_key, float(price), ttl=settings.CACHE_TTL)
+                logger.debug(f"📡 API 호출: {symbol} = ${price}")
+            except Exception as e:
+                logger.warning(f"⚠️ 캐시 저장 실패: {e}")
             
             return price
             
     except httpx.HTTPError as e:
-        logger.error(f"❌ Binance API 오류: {e}")
-        raise HTTPException(status_code=503, detail="시장 가격 조회 실패")
-    except KeyError:
-        logger.error(f"❌ 잘못된 응답 형식: {symbol}")
+        logger.error(f"❌ {symbol} 가격 조회 실패: {e}")
+        raise HTTPException(status_code=503, detail=f"{symbol} 시장 가격 조회 실패")
+    except KeyError as e:
+        logger.error(f"❌ {symbol} 잘못된 응답 형식: {e}")
         raise HTTPException(status_code=500, detail="가격 데이터 파싱 실패")
+
+
+async def get_multiple_prices(symbols: List[str]) -> Dict[str, Decimal]:
+    """
+    여러 심볼의 가격을 동시에 조회
+    """
+    prices = {}
+    
+    for symbol in symbols:
+        try:
+            price = await get_current_price(symbol)
+            prices[symbol] = price
+        except Exception as e:
+            logger.warning(f"⚠️ {symbol} 가격 조회 실패: {e}")
+            # 캐시된 값이라도 있으면 사용
+            try:
+                cached = cache_manager.get(f"price:{symbol}")
+                if cached:
+                    prices[symbol] = Decimal(str(cached))
+                    logger.info(f"💾 캐시된 가격 사용: {symbol} = ${cached}")
+            except Exception:
+                pass
+    
+    return prices
 
 
 async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Decimal:
@@ -82,9 +112,12 @@ async def get_24h_ticker(symbol: str) -> Dict:
     """24시간 티커 정보 (캐싱 적용)"""
     cache_key = f"ticker24h:{symbol}"
     
-    cached = cache_manager.get(cache_key)
-    if cached:
-        return cached
+    try:
+        cached = cache_manager.get(cache_key)
+        if cached:
+            return cached
+    except Exception as e:
+        logger.warning(f"⚠️ 캐시 읽기 실패: {e}")
     
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -95,7 +128,11 @@ async def get_24h_ticker(symbol: str) -> Dict:
             response.raise_for_status()
             data = response.json()
             
-            cache_manager.set(cache_key, data, ttl=settings.CACHE_TTL)
+            try:
+                cache_manager.set(cache_key, data, ttl=settings.CACHE_TTL)
+            except Exception as e:
+                logger.warning(f"⚠️ 캐시 저장 실패: {e}")
+            
             return data
             
     except httpx.HTTPError as e:
@@ -117,31 +154,8 @@ async def get_coin_info(symbol: str) -> Dict:
             "low": ticker.get("lowPrice", "0")
         }
     except Exception as e:
-        logger.error(f"❌ 코인 정보 조회 실패 ({symbol}): {e}")
-        return {
-            "symbol": symbol,
-            "price": "0",
-            "change": "0",
-            "volume": "0",
-            "high": "0",
-            "low": "0"
-        }
-
-
-async def get_multiple_prices(symbols: List[str]) -> Dict[str, Decimal]:
-    """여러 심볼의 가격 동시 조회"""
-    prices = {}
-    
-    for symbol in symbols:
-        try:
-            price = await get_current_price(symbol)
-            prices[symbol] = price
-        except Exception as e:
-            logger.error(f"❌ {symbol} 가격 조회 실패: {e}")
-            prices[symbol] = Decimal("0")
-    
-    return prices
-
+        logger.error(f"❌ {symbol} 정보 조회 실패: {e}")
+        raise HTTPException(status_code=503, detail="코인 정보 조회 실패")
 
 async def get_historical_data(symbol: str, interval: str = "1h", limit: int = 100) -> List[Dict]:
     """과거 데이터 조회 (차트용)"""
