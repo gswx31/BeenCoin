@@ -1,8 +1,9 @@
 # app/services/order_service.py
 """
-주문 서비스 - 버그 수정 및 성능 최적화 완료
+주문 서비스 - 동시성 문제 해결 및 안정성 강화
 """
 from sqlmodel import Session, select
+from sqlalchemy import select as sa_select
 from app.models.database import (
     Order, SpotAccount, SpotPosition, Transaction,
     OrderSide, OrderStatus, TradingType
@@ -17,15 +18,42 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+# 수수료 설정
+FEE_RATE = Decimal('0.001')  # 0.1%
+
+# 지정가 주문 모니터링 태스크 관리
+active_monitoring_tasks = {}
+
+
+class OrderError(HTTPException):
+    """주문 처리 중 발생하는 에러의 기본 클래스"""
+    pass
+
+
+class InsufficientBalanceError(OrderError):
+    def __init__(self, available: Decimal, required: Decimal):
+        super().__init__(
+            status_code=400,
+            detail=f"잔액 부족: 보유 ${float(available):.2f} / 필요 ${float(required):.2f}"
+        )
+
+
+class InsufficientQuantityError(OrderError):
+    def __init__(self, available: Decimal, required: Decimal):
+        super().__init__(
+            status_code=400,
+            detail=f"보유 수량 부족: {float(available):.8f} / 필요 {float(required):.8f}"
+        )
+
 
 async def create_order(session: Session, user_id: int, order_data: OrderCreate) -> Order:
     """
     주문 생성 및 처리
     
-    버그 수정:
-    - ✅ 시장가 매도 시 포지션 사전 검증
-    - ✅ 포지션 0일 때 평균단가 초기화
-    - ✅ 평균단가 계산 로직 개선
+    개선사항:
+    - ✅ 비관적 락으로 동시성 문제 해결
+    - ✅ 트랜잭션 롤백 보장
+    - ✅ 에러 처리 세분화
     """
     
     # 1. 입력 검증
@@ -42,13 +70,20 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
     except (ValueError, InvalidOperation) as e:
         raise HTTPException(status_code=400, detail=f"잘못된 입력: {str(e)}")
     
-    # 2. 계정 조회
-    account = session.exec(
-        select(SpotAccount).where(SpotAccount.user_id == user_id)
-    ).first()
-    
-    if not account:
-        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
+    # 2. ✅ 비관적 락으로 계정 조회 (동시성 문제 해결)
+    try:
+        account = session.exec(
+            sa_select(SpotAccount)
+            .where(SpotAccount.user_id == user_id)
+            .with_for_update()  # ✅ 행 단위 락
+        ).first()
+        
+        if not account:
+            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
+            
+    except Exception as e:
+        logger.error(f"❌ 계정 조회 실패: {e}")
+        raise HTTPException(status_code=500, detail="계정 조회 실패")
     
     # 3. 시장가 주문 사전 검증
     if order_data.order_type == 'MARKET':
@@ -60,12 +95,9 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
                 required = estimated_price * quantity
                 
                 if account.usdt_balance < required:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"잔액 부족: 보유 ${float(account.usdt_balance):.2f} / 필요 ${float(required):.2f}"
-                    )
+                    raise InsufficientBalanceError(account.usdt_balance, required)
             
-            # 매도: 포지션 검증 (✅ 버그 수정!)
+            # 매도: 포지션 검증
             elif order_data.side == OrderSide.SELL:
                 position = session.exec(
                     select(SpotPosition).where(
@@ -74,14 +106,11 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
                     )
                 ).first()
                 
-                if not position or position.quantity < quantity:
-                    available = float(position.quantity) if position else 0
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"보유 수량 부족: {available:.8f} / 필요 {float(quantity):.8f}"
-                    )
+                available = position.quantity if position else Decimal('0')
+                if available < quantity:
+                    raise InsufficientQuantityError(available, quantity)
                     
-        except HTTPException:
+        except OrderError:
             raise
         except Exception as e:
             logger.error(f"❌ 가격 조회 실패: {e}")
@@ -124,12 +153,10 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
             if not price:
                 raise HTTPException(status_code=400, detail="지정가 주문은 가격이 필요합니다")
             
-            asyncio.create_task(
-                _monitor_limit_order(order.id, order.symbol, order.side, quantity, price, user_id)
-            )
+            _start_monitoring_task(order.id, order.symbol, order.side, quantity, price, user_id)
             logger.info(f"⏳ 지정가 모니터링 시작: ID={order.id}, Target=${price}")
             
-    except HTTPException:
+    except OrderError:
         order.status = OrderStatus.REJECTED
         session.add(order)
         session.commit()
@@ -148,26 +175,30 @@ def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decima
     """
     주문 체결 처리
     
-    버그 수정:
-    - ✅ 평균단가 계산 개선 (포지션 0일 때 처리)
-    - ✅ 매도 후 포지션 0이 되면 평균단가 초기화
+    개선사항:
+    - ✅ 트랜잭션 롤백 보장
+    - ✅ 수수료 계산 추가
     """
     
     try:
-        # 계정 조회
+        # ✅ 비관적 락으로 계정 조회
         account = session.exec(
-            select(SpotAccount).where(SpotAccount.user_id == order.user_id)
+            sa_select(SpotAccount)
+            .where(SpotAccount.user_id == order.user_id)
+            .with_for_update()
         ).first()
         
         if not account:
             raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
         
-        # 포지션 조회/생성
+        # ✅ 비관적 락으로 포지션 조회/생성
         position = session.exec(
-            select(SpotPosition).where(
+            sa_select(SpotPosition)
+            .where(
                 SpotPosition.account_id == account.id,
                 SpotPosition.symbol == order.symbol
             )
+            .with_for_update()
         ).first()
         
         if not position:
@@ -183,48 +214,43 @@ def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decima
             session.add(position)
             session.flush()
         
+        # ✅ 수수료 계산
+        fee = price * quantity * FEE_RATE
+        
         # 매수 처리
         if order.side == OrderSide.BUY:
-            total_cost = price * quantity
+            total_cost = (price * quantity) + fee
             
             if account.usdt_balance < total_cost:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"잔액 부족: 보유 ${float(account.usdt_balance):.2f} / 필요 ${float(total_cost):.2f}"
-                )
+                raise InsufficientBalanceError(account.usdt_balance, total_cost)
             
-            # ✅ 평균단가 계산 개선
+            # 평균단가 계산
             if position.quantity > 0:
-                # 기존 포지션이 있는 경우: 가중 평균
                 total_value = (position.average_price * position.quantity) + (price * quantity)
                 new_quantity = position.quantity + quantity
                 position.average_price = total_value / new_quantity
             else:
-                # 새로운 포지션: 현재 가격이 평균단가
                 position.average_price = price
             
             position.quantity += quantity
             account.usdt_balance -= total_cost
             
-            logger.info(f"💰 매수 체결: {quantity} {order.symbol} @ ${price}")
+            logger.info(f"💰 매수 체결: {quantity} {order.symbol} @ ${price} (수수료: ${fee})")
         
         # 매도 처리
         elif order.side == OrderSide.SELL:
             if position.quantity < quantity:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"보유 수량 부족: {float(position.quantity):.8f} (필요: {float(quantity):.8f})"
-                )
+                raise InsufficientQuantityError(position.quantity, quantity)
             
             # 실현 손익 계산
-            proceeds = price * quantity
+            proceeds = (price * quantity) - fee
             realized_profit = (price - position.average_price) * quantity
             
             position.quantity -= quantity
             account.usdt_balance += proceeds
             account.total_profit += realized_profit
             
-            # ✅ 버그 수정: 포지션이 0이 되면 평균단가 초기화
+            # 포지션이 0이 되면 평균단가 초기화
             if position.quantity == 0:
                 position.average_price = Decimal('0')
             
@@ -245,10 +271,9 @@ def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decima
             side=order.side,
             quantity=quantity,
             price=price,
-            fee=Decimal('0'),  # 수수료 없음으로 통일
+            fee=fee,  # ✅ 수수료 기록
             timestamp=datetime.utcnow()
         )
-        session.add(transaction)
         
         # 포지션 평가 업데이트
         position.current_price = price
@@ -256,14 +281,15 @@ def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decima
         position.unrealized_profit = position.quantity * (price - position.average_price) if position.quantity > 0 else Decimal('0')
         position.updated_at = datetime.utcnow()
         
-        # 커밋
-        session.add(order)
-        session.add(account)
-        session.add(position)
+        # ✅ 모든 변경사항을 한번에 커밋
+        session.add_all([order, account, position, transaction])
         session.commit()
         
         logger.info(f"✅ 체결 완료: Order ID={order.id}")
         
+    except OrderError:
+        session.rollback()
+        raise
     except HTTPException:
         session.rollback()
         raise
@@ -271,6 +297,43 @@ def _fill_order(session: Session, order: Order, price: Decimal, quantity: Decima
         session.rollback()
         logger.error(f"❌ 체결 처리 실패: {e}")
         raise HTTPException(status_code=500, detail="주문 체결 처리 실패")
+
+
+def _start_monitoring_task(
+    order_id: int,
+    symbol: str,
+    side: str,
+    quantity: Decimal,
+    target_price: Decimal,
+    user_id: int
+):
+    """
+    지정가 주문 모니터링 태스크 시작
+    
+    개선사항:
+    - ✅ 태스크 관리로 메모리 누수 방지
+    """
+    
+    # 이미 모니터링 중인지 확인
+    if order_id in active_monitoring_tasks:
+        logger.warning(f"⚠️ 주문 {order_id}는 이미 모니터링 중입니다")
+        return
+    
+    # 태스크 생성 및 등록
+    task = asyncio.create_task(
+        _monitor_limit_order(order_id, symbol, side, quantity, target_price, user_id)
+    )
+    
+    active_monitoring_tasks[order_id] = task
+    
+    # 태스크 완료 시 자동 제거
+    def cleanup(future):
+        active_monitoring_tasks.pop(order_id, None)
+        logger.info(f"🧹 태스크 정리 완료: Order ID={order_id}")
+    
+    task.add_done_callback(cleanup)
+    
+    logger.info(f"🚀 모니터링 태스크 시작: Order ID={order_id}")
 
 
 async def _monitor_limit_order(
@@ -289,63 +352,18 @@ async def _monitor_limit_order(
     elapsed_time = 0
     last_trade_id = None
     
-    logger.info(f"⏳ 지정가 모니터링 시작: {side} {quantity} {symbol} @ ${target_price}")
+    logger.info(f"⏳ 지정가 주문 모니터링 시작: Order ID={order_id}")
+
+def get_user_orders(session: Session, user_id: int, limit: int = 50):
+    """사용자 주문 내역 조회"""
+    orders = session.exec(
+        select(Order)
+        .where(Order.user_id == user_id)
+        .order_by(Order.created_at.desc())
+        .limit(limit)
+    ).all()
     
-    try:
-        while elapsed_time < max_duration:
-            try:
-                trades = await get_recent_trades(symbol, limit=50)
-                
-                if trades:
-                    if last_trade_id:
-                        trades = [t for t in trades if t['id'] > last_trade_id]
-                    
-                    if trades:
-                        last_trade_id = max(t['id'] for t in trades)
-                    
-                    for trade in trades:
-                        trade_price = Decimal(str(trade['price']))
-                        
-                        should_fill = False
-                        
-                        if side == OrderSide.BUY and trade_price <= target_price:
-                            should_fill = True
-                            logger.info(f"💰 매수 조건 충족: ${trade_price} <= ${target_price}")
-                        
-                        elif side == OrderSide.SELL and trade_price >= target_price:
-                            should_fill = True
-                            logger.info(f"💸 매도 조건 충족: ${trade_price} >= ${target_price}")
-                        
-                        if should_fill:
-                            with Session(engine) as new_session:
-                                order = new_session.get(Order, order_id)
-                                if order and order.status == OrderStatus.PENDING:
-                                    _fill_order(new_session, order, trade_price, quantity)
-                                    logger.info(f"✅ 지정가 체결: ID={order_id} @ ${trade_price}")
-                            return
-                
-                await asyncio.sleep(check_interval)
-                elapsed_time += check_interval
-                
-            except Exception as e:
-                logger.error(f"❌ 모니터링 체크 오류: {e}")
-                await asyncio.sleep(5)
-                elapsed_time += 5
-        
-        # 24시간 만료
-        with Session(engine) as new_session:
-            order = new_session.get(Order, order_id)
-            if order and order.status == OrderStatus.PENDING:
-                order.status = OrderStatus.EXPIRED
-                order.updated_at = datetime.utcnow()
-                new_session.add(order)
-                new_session.commit()
-                logger.warning(f"⏰ 주문 만료: ID={order_id}")
-                
-    except Exception as e:
-        logger.error(f"❌ 모니터링 중단: {e}")
-
-
+    return orders
 def cancel_order(session: Session, user_id: int, order_id: int) -> dict:
     """주문 취소"""
     try:

@@ -2,16 +2,22 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatPrice } from '../../utils/formatPrice';
 
 const CoinCard = ({ coin }) => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
   
   const isPositive = coin.change >= 0;
-  const price = coin.currentPrice?.toLocaleString('ko-KR') || 'Loading...';
+  const price = formatPrice(coin.currentPrice);
 
   const handleCardClick = () => {
-    navigate(`/coin/${coin.symbol}`);
+    // 모의투자이므로 바로 거래 화면으로
+    if (!isAuthenticated) {
+      navigate('/login');
+      return;
+    }
+    navigate(`/trade/${coin.symbol}`);
   };
 
   const handleTradeClick = (e) => {

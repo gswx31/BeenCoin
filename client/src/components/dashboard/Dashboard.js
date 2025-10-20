@@ -1,5 +1,5 @@
 // client/src/components/dashboard/Dashboard.js
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useMarket } from '../../contexts/MarketContext';
 import { useAuth } from '../../contexts/AuthContext';
 import CoinCard from '../market/CoinCard';
@@ -48,7 +48,7 @@ const Dashboard = () => {
           <h1 className="text-3xl font-bold">
             {isAuthenticated ? `${user?.username}님, 환영합니다!` : 'BeenCoin 모의투자'}
           </h1>
-          <p className="text-gray-400">실시간 암호화폐 시장 현황</p>
+          <p className="text-gray-400">실시간 암호화폐 시장 현황 - 모의투자로 안전하게 연습하세요</p>
         </div>
         {isAuthenticated && <QuickStats />}
       </div>
@@ -94,6 +94,7 @@ const Dashboard = () => {
         <div className="text-center p-8 bg-gradient-to-r from-purple-900 to-blue-900 rounded-lg">
           <h2 className="text-2xl font-bold mb-4">지금 가입하고 100만원으로 모의투자 시작하기</h2>
           <p className="text-gray-300 mb-4">실시간 차트 분석, 다양한 코인 거래, 포트폴리오 관리까지</p>
+          <p className="text-sm text-teal-300 mb-6">⚠️ 모의투자 플랫폼입니다. 실제 돈이 거래되지 않습니다.</p>
           <div className="space-x-4">
             <a href="/register" className="inline-block px-6 py-3 bg-accent text-white rounded-lg hover:bg-teal-600">
               무료로 시작하기

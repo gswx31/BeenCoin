@@ -9,7 +9,7 @@ from app.cache.cache_manager import cache_manager  # ✅ 직접 import
 import asyncio
 import logging
 from datetime import datetime, timezone  # ✅ timezone 추가
-
+from app.middleware.rate_limit import RateLimitMiddleware, rate_limiter
 # 로깅 설정
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
@@ -26,6 +26,7 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+app.add_middleware(RateLimitMiddleware)
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
@@ -37,7 +38,6 @@ app.add_middleware(
 
 
 # 시작 이벤트
-@app.on_event("startup")
 async def startup_event():
     """서버 시작 시 실행"""
     logger.info("=" * 60)
@@ -77,6 +77,7 @@ async def startup_event():
     logger.info(f"📚 API Docs: http://{settings.API_HOST}:{settings.API_PORT}/docs")
     logger.info("=" * 60)
 
+    asyncio.create_task(rate_limiter.cleanup_old_entries())
 
 @app.on_event("shutdown")
 async def shutdown_event():
