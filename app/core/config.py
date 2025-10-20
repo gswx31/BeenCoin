@@ -71,7 +71,21 @@ class Settings(BaseSettings):
         """SUPPORTED_SYMBOLS를 리스트로 반환"""
         symbols_str = os.getenv("SUPPORTED_SYMBOLS", self.SUPPORTED_SYMBOLS_STR)
         return [symbol.strip() for symbol in symbols_str.split(",")]
-
+    # Redis 설정
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CACHE_ENABLED: bool = True
+    
+    # 성능 설정
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_TIMEOUT: int = 30
+    
+    # API 타임아웃
+    BINANCE_TIMEOUT: int = 10
+    HTTP_TIMEOUT: int = 30
+    
+    class Config:
+        env_file = ".env"
 
 # 설정 인스턴스 생성
 settings = Settings()

@@ -9,7 +9,7 @@ import argparse
 # 프로젝트 루트 경로 추가
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.models.database import create_db_and_tables
+from app.models.database import create_all_tables
 from app.core.config import settings
 
 def init_database(force: bool = False):
@@ -39,7 +39,7 @@ def init_database(force: bool = False):
     # 새 DB 생성
     print(f"\n📝 새 데이터베이스 생성 중...")
     try:
-        create_db_and_tables()
+        create_all_tables()
         print(f"\n✅ 데이터베이스가 성공적으로 생성되었습니다!")
         print(f"📂 위치: {db_path.absolute()}")
         

@@ -27,3 +27,7 @@ celerybeat-schedule
 client/node_modules/
 logs/
 *.log
+.env.production
+.env.local
+.vscode/
+.idea/

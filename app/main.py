@@ -10,6 +10,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone  # ✅ timezone 추가
 from app.middleware.rate_limit import RateLimitMiddleware, rate_limiter
+from app.middleware.cache_middleware import HTTPCacheMiddleware
+from app.cache.redis_cache import redis_cache
 # 로깅 설정
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
@@ -36,6 +38,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def startup_event():
+    await redis_cache.connect()
+    print("✅ 서버 시작")
 
 # 시작 이벤트
 async def startup_event():
@@ -92,6 +99,7 @@ async def shutdown_event():
     stats = cache_manager.get_stats()
     logger.info(f"💾 Cache stats: {stats}")
     cache_manager.clear()
+    await redis_cache.disconnect()
     
     logger.info("✅ Shutdown complete")
 
