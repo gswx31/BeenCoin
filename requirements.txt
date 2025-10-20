@@ -16,9 +16,12 @@ bcrypt==4.0.1
 # HTTP
 httpx==0.25.2
 
-# Settings
+# Settings  
 pydantic==2.5.0
 pydantic-settings==2.1.0
+
+# Utilities
+python-dateutil==2.8.2
 
 # Testing (optional)
 pytest==7.4.3
