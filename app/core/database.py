@@ -1,5 +1,4 @@
-# app/core/database.py
-from sqlmodel import create_engine, Session
+from sqlmodel import create_engine, Session, SQLModel
 from app.core.config import settings
 import logging
 
@@ -19,15 +18,24 @@ engine = create_engine(
     connect_args=connect_args
 )
 
-
 def get_session():
     """데이터베이스 세션 제공 (의존성 주입용)"""
     with Session(engine) as session:
         yield session
 
-
 def create_db_and_tables():
-    """데이터베이스 초기화"""
-    from app.models.database import SQLModel
-    SQLModel.metadata.create_all(engine)
-    logger.info("✅ Database tables created successfully")
+    """데이터베이스 초기화 - 테이블 생성"""
+    try:
+        SQLModel.metadata.create_all(engine)
+        logger.info("✅ Database tables created successfully")
+    except Exception as e:
+        logger.error(f"❌ Database creation failed: {e}")
+        raise
+
+def drop_all_tables():
+    """모든 테이블 삭제 (디버깅용)"""
+    try:
+        SQLModel.metadata.drop_all(engine)
+        logger.info("✅ All tables dropped")
+    except Exception as e:
+        logger.error(f"❌ Table drop failed: {e}")

@@ -39,7 +39,6 @@ class TradingType(str, Enum):
 # ========================================
 # 사용자 모델
 # ========================================
-
 class User(SQLModel, table=True):
     __tablename__ = "users"
     
@@ -49,12 +48,11 @@ class User(SQLModel, table=True):
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
-    # 관계
+    # ✅ FUTURES_ACCOUNT 관계 추가 (핵심 수정!)
     spot_account: Optional["SpotAccount"] = Relationship(back_populates="user")
+    futures_account: Optional["FuturesAccount"] = Relationship(back_populates="user")  # ✅ 추가
     orders: List["Order"] = Relationship(back_populates="user")
     transactions: List["Transaction"] = Relationship(back_populates="user")
-
-
 # ========================================
 # 현물 거래 계정
 # ========================================
