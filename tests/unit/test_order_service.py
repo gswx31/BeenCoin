@@ -1,30 +1,23 @@
 import pytest
 from decimal import Decimal
-from app.models.database import SpotAccount
-from app.schemas.order import OrderCreate, OrderSide
-from app.services import order_service
+from app.services.order_service import update_position
+from app.models.database import TradingAccount, Position
+from sqlmodel import Session, create_engine
+from sqlalchemy.pool import StaticPool
 
-@pytest.mark.asyncio
-async def test_create_order_buy_market(session, mocker):
-    # Binance API 호출 모킹
-    mocker.patch("app.services.order_service.get_current_price", return_value=Decimal("100"))
-    mocker.patch("app.services.order_service.execute_market_order", return_value=Decimal("100"))
+@pytest.fixture
+def session():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    from app.models.database import SQLModel
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
 
-    # 계정 생성
-    account = SpotAccount(user_id=1, usdt_balance=Decimal("10000"))
+def test_update_position_buy(session: Session):
+    account = TradingAccount(id=1, user_id=1, balance=Decimal('1000000'))
     session.add(account)
     session.commit()
-
-    # 주문 생성
-    order_data = OrderCreate(
-        symbol="BTCUSDT",
-        side=OrderSide.BUY,
-        order_type="MARKET",
-        quantity=Decimal("0.1")
-    )
-
-    order = await order_service.create_order(session, user_id=1, order_data=order_data)
-
-    assert order.id is not None
-    assert order.status == "FILLED"
-    assert order.symbol == "BTCUSDT"
+    update_position(session, 1, "BTCUSDT", "BUY", Decimal('1'), Decimal('50000'), Decimal('50'))
+    position = session.exec(Position.select().where(Position.symbol == "BTCUSDT")).first()
+    assert position.quantity == Decimal('1')
+    assert account.balance == Decimal('999950')
