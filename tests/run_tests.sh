@@ -21,7 +21,7 @@ case "$1" in
     echo -e "${YELLOW}단위 테스트 실행 중...${NC}"
     pytest tests/unit -v
     ;;
-  "integration")
+  "integ./tests/run_tests.sh unitration")
     echo -e "${YELLOW}통합 테스트 실행 중...${NC}"
     pytest tests/integration -v
     ;;
