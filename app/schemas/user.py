@@ -1,5 +1,5 @@
 # app/schemas/user.py
-from pydantic import BaseModel, validator, field_validator
+from pydantic import BaseModel, field_validator
 from typing import Optional
 
 class UserBase(BaseModel):
@@ -32,7 +32,7 @@ class UserLogin(UserBase):
     password: str
 
 class UserOut(UserBase):
-    id: int
+    id: str  # UUID
     created_at: str
     
     class Config:
