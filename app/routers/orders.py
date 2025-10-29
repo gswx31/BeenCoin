@@ -1,6 +1,6 @@
 # app/routers/orders.py
 """
-주문 관련 API 라우터
+주문 관련 API 라우터 - 수정 버전
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
@@ -27,24 +27,19 @@ async def place_order(
     
     ### 요청 파라미터:
     - **symbol**: 거래 심볼 (예: BTCUSDT, ETHUSDT)
-    - **side**: 주문 방향
-        - BUY: 매수
-        - SELL: 매도
-    - **order_type**: 주문 타입
-        - MARKET: 시장가 (즉시 체결)
-        - LIMIT: 지정가 (목표가 도달 시 체결)
-    - **quantity**: 주문 수량 (Decimal)
+    - **side**: 주문 방향 (BUY, SELL)
+    - **order_type**: 주문 타입 (MARKET, LIMIT)
+    - **quantity**: 주문 수량
     - **price**: 가격 (지정가 주문 시 필수)
     
     ### 응답:
-    - 생성된 주문 정보 반환
+    - 생성된 주문 정보
     - 시장가 주문은 즉시 FILLED 상태
     - 지정가 주문은 PENDING 상태로 생성
     
     ### 에러:
     - 400: 잘못된 입력, 잔액/수량 부족
     - 503: 시장가격 조회 실패
-    - 500: 서버 내부 오류
     """
     
     logger.info(
@@ -54,31 +49,31 @@ async def place_order(
     )
     
     try:
-        # ✅ 주문 생성 (await 사용)
+        # 주문 생성
         created_order = await create_order(session, current_user.id, order)
         
-        # ✅ OrderOut으로 변환 (Enum을 문자열로)
+        # ✅ OrderOut으로 변환 (order_status 필드명 주의!)
         return OrderOut(
             id=created_order.id,
-            account_id=created_order.account_id,
+            user_id=created_order.user_id,
             symbol=created_order.symbol,
-            side=created_order.side if isinstance(created_order.side, str) else created_order.side.value,
-            order_type=created_order.order_type if isinstance(created_order.order_type, str) else created_order.order_type.value,
-            quantity=created_order.quantity,
-            price=created_order.price,
-            status=created_order.status if isinstance(created_order.status, str) else created_order.status.value,
-            fee=created_order.fee,
-            created_at=created_order.created_at,
-            filled_at=created_order.filled_at
+            side=created_order.side.value if hasattr(created_order.side, 'value') else str(created_order.side),
+            order_type=created_order.order_type.value if hasattr(created_order.order_type, 'value') else str(created_order.order_type),
+            order_status=created_order.order_status.value if hasattr(created_order.order_status, 'value') else str(created_order.order_status),  # ✅ order_status
+            quantity=float(created_order.quantity),
+            price=float(created_order.price) if created_order.price else None,
+            filled_quantity=float(created_order.filled_quantity),
+            average_price=float(created_order.average_price) if created_order.average_price else None,
+            created_at=created_order.created_at.isoformat(),
+            updated_at=created_order.updated_at.isoformat()
         )
     
     except HTTPException as e:
-        # ✅ HTTPException은 그대로 전달 (상태 코드 유지)
         logger.error(f"❌ 주문 실패 (HTTP {e.status_code}): {e.detail}")
         raise
     
     except Exception as e:
-        logger.error(f"❌ 주문 처리 중 예상치 못한 오류: {e}")
+        logger.error(f"❌ 주문 처리 중 예상치 못한 오류: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"주문 처리 중 오류가 발생했습니다: {str(e)}"
@@ -119,26 +114,27 @@ async def get_orders(
             limit=limit
         )
         
-        # ✅ OrderOut으로 변환
+        # ✅ OrderOut으로 변환 (order_status 필드명 주의!)
         return [
             OrderOut(
                 id=order.id,
-                account_id=order.account_id,
+                user_id=order.user_id,
                 symbol=order.symbol,
-                side=order.side if isinstance(order.side, str) else order.side.value,
-                order_type=order.order_type if isinstance(order.order_type, str) else order.order_type.value,
-                quantity=order.quantity,
-                price=order.price,
-                status=order.status if isinstance(order.status, str) else order.status.value,
-                fee=order.fee,
-                created_at=order.created_at,
-                filled_at=order.filled_at
+                side=order.side.value if hasattr(order.side, 'value') else str(order.side),
+                order_type=order.order_type.value if hasattr(order.order_type, 'value') else str(order.order_type),
+                order_status=order.order_status.value if hasattr(order.order_status, 'value') else str(order.order_status),  # ✅ order_status
+                quantity=float(order.quantity),
+                price=float(order.price) if order.price else None,
+                filled_quantity=float(order.filled_quantity),
+                average_price=float(order.average_price) if order.average_price else None,
+                created_at=order.created_at.isoformat(),
+                updated_at=order.updated_at.isoformat()
             )
             for order in orders
         ]
     
     except Exception as e:
-        logger.error(f"❌ 주문 목록 조회 실패: {e}")
+        logger.error(f"❌ 주문 목록 조회 실패: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="주문 목록 조회 중 오류가 발생했습니다"
@@ -166,8 +162,7 @@ async def get_order(
     """
     
     try:
-        from app.models.database import Order, TradingAccount
-        from sqlmodel import select
+        from app.models.database import Order
         
         # 주문 조회
         order = session.get(Order, order_id)
@@ -179,32 +174,32 @@ async def get_order(
             )
         
         # 권한 확인
-        account = session.get(TradingAccount, order.account_id)
-        if not account or account.user_id != current_user.id:
+        if order.user_id != current_user.id:
             raise HTTPException(
                 status_code=403,
                 detail="이 주문에 접근할 권한이 없습니다"
             )
         
-        # OrderOut으로 변환
+        # ✅ OrderOut으로 변환 (order_status 필드명 주의!)
         return OrderOut(
             id=order.id,
-            account_id=order.account_id,
+            user_id=order.user_id,
             symbol=order.symbol,
-            side=order.side if isinstance(order.side, str) else order.side.value,
-            order_type=order.order_type if isinstance(order.order_type, str) else order.order_type.value,
-            quantity=order.quantity,
-            price=order.price,
-            status=order.status if isinstance(order.status, str) else order.status.value,
-            fee=order.fee,
-            created_at=order.created_at,
-            filled_at=order.filled_at
+            side=order.side.value if hasattr(order.side, 'value') else str(order.side),
+            order_type=order.order_type.value if hasattr(order.order_type, 'value') else str(order.order_type),
+            order_status=order.order_status.value if hasattr(order.order_status, 'value') else str(order.order_status),  # ✅ order_status
+            quantity=float(order.quantity),
+            price=float(order.price) if order.price else None,
+            filled_quantity=float(order.filled_quantity),
+            average_price=float(order.average_price) if order.average_price else None,
+            created_at=order.created_at.isoformat(),
+            updated_at=order.updated_at.isoformat()
         )
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 주문 조회 실패: {e}")
+        logger.error(f"❌ 주문 조회 실패: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="주문 조회 중 오류가 발생했습니다"
@@ -224,12 +219,12 @@ async def cancel_order_endpoint(
     - **order_id**: 취소할 주문 ID
     
     ### 응답:
-    - 취소된 주문 정보 (status가 CANCELLED로 변경됨)
+    - 취소된 주문 정보 (order_status가 CANCELLED로 변경됨)
     
     ### 에러:
     - 404: 주문을 찾을 수 없음
     - 403: 취소 권한 없음
-    - 400: 취소할 수 없는 상태 (이미 체결됨 등)
+    - 400: 취소할 수 없는 상태
     """
     
     logger.info(f"🚫 주문 취소 요청: User={current_user.username}, Order ID={order_id}")
@@ -237,74 +232,27 @@ async def cancel_order_endpoint(
     try:
         cancelled_order = await cancel_order(session, current_user.id, order_id)
         
-        # OrderOut으로 변환
+        # ✅ OrderOut으로 변환 (order_status 필드명 주의!)
         return OrderOut(
             id=cancelled_order.id,
-            account_id=cancelled_order.account_id,
+            user_id=cancelled_order.user_id,
             symbol=cancelled_order.symbol,
-            side=cancelled_order.side if isinstance(cancelled_order.side, str) else cancelled_order.side.value,
-            order_type=cancelled_order.order_type if isinstance(cancelled_order.order_type, str) else cancelled_order.order_type.value,
-            quantity=cancelled_order.quantity,
-            price=cancelled_order.price,
-            status=cancelled_order.status if isinstance(cancelled_order.status, str) else cancelled_order.status.value,
-            fee=cancelled_order.fee,
-            created_at=cancelled_order.created_at,
-            filled_at=cancelled_order.filled_at
+            side=cancelled_order.side.value if hasattr(cancelled_order.side, 'value') else str(cancelled_order.side),
+            order_type=cancelled_order.order_type.value if hasattr(cancelled_order.order_type, 'value') else str(cancelled_order.order_type),
+            order_status=cancelled_order.order_status.value if hasattr(cancelled_order.order_status, 'value') else str(cancelled_order.order_status),  # ✅ order_status
+            quantity=float(cancelled_order.quantity),
+            price=float(cancelled_order.price) if cancelled_order.price else None,
+            filled_quantity=float(cancelled_order.filled_quantity),
+            average_price=float(cancelled_order.average_price) if cancelled_order.average_price else None,
+            created_at=cancelled_order.created_at.isoformat(),
+            updated_at=cancelled_order.updated_at.isoformat()
         )
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 주문 취소 실패: {e}")
+        logger.error(f"❌ 주문 취소 실패: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="주문 취소 중 오류가 발생했습니다"
-        )
-
-
-@router.get("/history/recent", response_model=List[OrderOut])
-async def get_recent_orders(
-    limit: int = Query(20, ge=1, le=100, description="최근 주문 개수"),
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
-):
-    """
-    최근 주문 내역 조회 (간편 버전)
-    
-    ### 쿼리 파라미터:
-    - **limit**: 조회할 주문 개수 (기본 20, 최대 100)
-    
-    ### 응답:
-    - 최근 주문 목록 (최신순)
-    """
-    
-    try:
-        orders = get_user_orders(
-            session=session,
-            user_id=current_user.id,
-            limit=limit
-        )
-        
-        return [
-            OrderOut(
-                id=order.id,
-                account_id=order.account_id,
-                symbol=order.symbol,
-                side=order.side if isinstance(order.side, str) else order.side.value,
-                order_type=order.order_type if isinstance(order.order_type, str) else order.order_type.value,
-                quantity=order.quantity,
-                price=order.price,
-                status=order.status if isinstance(order.status, str) else order.status.value,
-                fee=order.fee,
-                created_at=order.created_at,
-                filled_at=order.filled_at
-            )
-            for order in orders
-        ]
-    
-    except Exception as e:
-        logger.error(f"❌ 최근 주문 조회 실패: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="최근 주문 조회 중 오류가 발생했습니다"
         )
