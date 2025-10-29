@@ -55,7 +55,7 @@ class OrderCreate(BaseModel):
 class OrderOut(BaseModel):
     """주문 응답 스키마"""
     id: int
-    user_id: int
+    user_id: str
     symbol: str
     side: str
     order_type: str
@@ -71,7 +71,7 @@ class OrderOut(BaseModel):
         schema_extra = {
             "example": {
                 "id": 1,
-                "user_id": 1,
+                "user_id": "132412634534-345-345345-345",
                 "symbol": "BTCUSDT",
                 "side": "BUY",
                 "order_type": "MARKET",

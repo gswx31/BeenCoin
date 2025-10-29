@@ -140,7 +140,7 @@ def get_position_details(session: Session, user_id: int) -> List[Dict]:
 
 def get_transaction_history(
     session: Session, 
-    user_id: int,
+    user_id: str,
     symbol: Optional[str] = None,
     side: Optional[str] = None,
     limit: int = 50,
@@ -196,7 +196,7 @@ def get_transaction_history(
 
 def get_order_history(
     session: Session,
-    user_id: int,
+    user_id: str,
     status: Optional[str] = None,
     symbol: Optional[str] = None,
     limit: int = 50
@@ -335,7 +335,7 @@ def get_performance_metrics(session: Session, user_id: int) -> Dict:
     }
 
 
-def get_daily_performance(session: Session, user_id: int, days: int = 30) -> List[Dict]:
+def get_daily_performance(session: Session, user_id: str, days: int = 30) -> List[Dict]:
     """
     일별 성과 추이 (차트용)
     """

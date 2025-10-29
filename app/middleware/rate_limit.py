@@ -1,176 +1,121 @@
 # app/middleware/rate_limit.py
 """
-Rate Limiting 미들웨어 - 주문 남용 방지
+Rate Limiting 미들웨어
+- IP별 요청 제한
+- DDoS 공격 방어
+- 유연한 설정
 """
-from fastapi import Request, HTTPException
+
+from fastapi import Request, HTTPException, status
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from datetime import datetime, timedelta
 from collections import defaultdict
-from typing import Dict, Tuple
-import asyncio
+from datetime import datetime, timedelta
+from typing import Dict, List
+import logging
 
-
-class RateLimiter:
-    """
-    간단한 Rate Limiter 구현
-    
-    실제 프로덕션에서는 Redis 사용 권장
-    """
-    
-    def __init__(self):
-        # user_id -> (요청 횟수, 윈도우 시작 시간)
-        self.requests: Dict[str, Tuple[int, datetime]] = {}
-        self.lock = asyncio.Lock()
-    
-    async def is_allowed(
-        self, 
-        key: str, 
-        max_requests: int, 
-        window_seconds: int
-    ) -> bool:
-        """
-        요청이 허용되는지 확인
-        
-        Args:
-            key: 사용자 식별자 (user_id 등)
-            max_requests: 윈도우 내 최대 요청 수
-            window_seconds: 시간 윈도우 (초)
-        
-        Returns:
-            허용 여부
-        """
-        async with self.lock:
-            now = datetime.utcnow()
-            
-            if key not in self.requests:
-                self.requests[key] = (1, now)
-                return True
-            
-            count, window_start = self.requests[key]
-            window_end = window_start + timedelta(seconds=window_seconds)
-            
-            # 윈도우가 만료되었으면 리셋
-            if now > window_end:
-                self.requests[key] = (1, now)
-                return True
-            
-            # 윈도우 내에서 요청 수 확인
-            if count >= max_requests:
-                return False
-            
-            # 요청 수 증가
-            self.requests[key] = (count + 1, window_start)
-            return True
-    
-    async def cleanup_old_entries(self):
-        """오래된 엔트리 정리 (메모리 누수 방지)"""
-        while True:
-            await asyncio.sleep(300)  # 5분마다
-            
-            async with self.lock:
-                now = datetime.utcnow()
-                expired_keys = [
-                    key for key, (_, window_start) in self.requests.items()
-                    if now - window_start > timedelta(hours=1)
-                ]
-                
-                for key in expired_keys:
-                    del self.requests[key]
-                
-                if expired_keys:
-                    print(f"🧹 Rate Limiter 정리: {len(expired_keys)}개 엔트리 제거")
-
-
-# 전역 Rate Limiter 인스턴스
-rate_limiter = RateLimiter()
+logger = logging.getLogger(__name__)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """
-    Rate Limiting 미들웨어
+    """Rate Limiting 미들웨어"""
     
-    특정 엔드포인트에 대한 요청 제한
-    """
-    
-    # 엔드포인트별 제한 설정
-    LIMITS = {
-        "/api/v1/orders/": {
-            "max_requests": 10,
-            "window_seconds": 60,  # 1분에 10개
-            "message": "주문 요청이 너무 많습니다. 잠시 후 다시 시도해주세요."
-        },
-        "/api/v1/auth/login": {
-            "max_requests": 5,
-            "window_seconds": 300,  # 5분에 5번
-            "message": "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해주세요."
-        },
-        "/api/v1/auth/register": {
-            "max_requests": 3,
-            "window_seconds": 3600,  # 1시간에 3번
-            "message": "회원가입 시도가 너무 많습니다. 잠시 후 다시 시도해주세요."
-        }
-    }
+    def __init__(
+        self,
+        app,
+        max_requests: int = 100,
+        window_seconds: int = 60,
+        exclude_paths: List[str] = None
+    ):
+        super().__init__(app)
+        self.max_requests = max_requests
+        self.window = timedelta(seconds=window_seconds)
+        self.requests: Dict[str, List[datetime]] = defaultdict(list)
+        self.exclude_paths = exclude_paths or ["/health", "/docs", "/redoc", "/openapi.json"]
     
     async def dispatch(self, request: Request, call_next):
-        # Rate Limit 적용 대상인지 확인
-        path = request.url.path
-        
-        # POST 요청만 제한
-        if request.method != "POST":
+        # 제외 경로 확인
+        if any(request.url.path.startswith(path) for path in self.exclude_paths):
             return await call_next(request)
         
-        # 제한 설정 확인
-        limit_config = None
-        for endpoint, config in self.LIMITS.items():
-            if path.startswith(endpoint):
-                limit_config = config
-                break
+        # 클라이언트 IP
+        client_ip = request.client.host
+        now = datetime.now()
         
-        if not limit_config:
-            return await call_next(request)
-        
-        # 사용자 식별 (IP 또는 user_id)
-        user_id = request.state.user.id if hasattr(request.state, 'user') and request.state.user else None
-        client_ip = request.client.host if request.client else "unknown"
-        rate_key = f"{user_id or client_ip}:{path}"
+        # 오래된 요청 제거
+        self.requests[client_ip] = [
+            req_time for req_time in self.requests[client_ip]
+            if now - req_time < self.window
+        ]
         
         # Rate Limit 확인
-        is_allowed = await rate_limiter.is_allowed(
-            rate_key,
-            limit_config["max_requests"],
-            limit_config["window_seconds"]
-        )
-        
-        if not is_allowed:
-            raise HTTPException(
-                status_code=429,
-                detail=limit_config["message"]
+        if len(self.requests[client_ip]) >= self.max_requests:
+            logger.warning(f"🚫 Rate limit exceeded: {client_ip}")
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={
+                    "detail": "Too many requests. Please try again later.",
+                    "retry_after": self.window.seconds
+                },
+                headers={
+                    "Retry-After": str(self.window.seconds)
+                }
             )
         
-        # 요청 처리
-        response = await call_next(request)
+        # 요청 기록
+        self.requests[client_ip].append(now)
         
-        # Rate Limit 정보 헤더 추가
-        response.headers["X-RateLimit-Limit"] = str(limit_config["max_requests"])
-        response.headers["X-RateLimit-Window"] = str(limit_config["window_seconds"])
+        # 응답 헤더에 Rate Limit 정보 추가
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(self.max_requests)
+        response.headers["X-RateLimit-Remaining"] = str(
+            self.max_requests - len(self.requests[client_ip])
+        )
+        response.headers["X-RateLimit-Reset"] = str(
+            int((now + self.window).timestamp())
+        )
         
         return response
 
 
-# ========================================
-# app/main.py에 추가할 코드
-# ========================================
-"""
-from app.middleware.rate_limit import RateLimitMiddleware, rate_limiter
-import asyncio
+class APIKeyRateLimiter:
+    """
+    API Key별 Rate Limiting (더 정교한 제어)
+    """
+    
+    def __init__(self):
+        self.requests: Dict[str, List[datetime]] = defaultdict(list)
+        self.limits = {
+            "free": (100, 60),      # 100 req/min
+            "premium": (1000, 60),  # 1000 req/min
+            "enterprise": (10000, 60)  # 10000 req/min
+        }
+    
+    async def check_limit(self, api_key: str, tier: str = "free") -> bool:
+        """API Key Rate Limit 확인"""
+        max_requests, window_seconds = self.limits.get(tier, self.limits["free"])
+        window = timedelta(seconds=window_seconds)
+        now = datetime.now()
+        
+        # 오래된 요청 제거
+        self.requests[api_key] = [
+            req_time for req_time in self.requests[api_key]
+            if now - req_time < window
+        ]
+        
+        # Limit 확인
+        if len(self.requests[api_key]) >= max_requests:
+            return False
+        
+        # 요청 기록
+        self.requests[api_key].append(now)
+        return True
+    
+    def get_remaining(self, api_key: str, tier: str = "free") -> int:
+        """남은 요청 수"""
+        max_requests, _ = self.limits.get(tier, self.limits["free"])
+        return max_requests - len(self.requests[api_key])
 
-app = FastAPI(...)
 
-# Rate Limiting 미들웨어 추가
-app.add_middleware(RateLimitMiddleware)
-
-# Rate Limiter 정리 태스크 시작
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(rate_limiter.cleanup_old_entries())
-"""
+# 싱글톤 인스턴스
+rate_limiter = APIKeyRateLimiter()

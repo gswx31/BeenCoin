@@ -1,6 +1,7 @@
 ﻿# app/services/binance_service.py
 """
-Binance API 서비스 - 시장가격 조회 안정화 버전
+Binance API 서비스 - Redis 캐싱 통합 버전
+기존 코드 + Redis 캐싱 + 성능 최적화
 """
 import httpx
 from decimal import Decimal
@@ -11,19 +12,33 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# ✅ Binance API URL (정확한 경로)
+# Binance API URL
 BINANCE_API_BASE = "https://api.binance.com/api/v3"
 
-# ✅ 타임아웃 설정
+# 타임아웃 설정
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
-# ✅ 재시도 설정
+# 재시도 설정
 MAX_RETRIES = 3
+
+# ✅ Redis 캐시 (없으면 무시)
+try:
+    from app.cache.redis_cache import redis_cache
+    REDIS_AVAILABLE = True
+    logger.info("✅ Redis 캐시 사용 가능")
+except ImportError:
+    REDIS_AVAILABLE = False
+    redis_cache = None
+    logger.warning("⚠️ Redis 캐시 비활성화 (redis_cache 모듈 없음)")
 
 
 async def get_current_price(symbol: str) -> Decimal:
     """
-    현재 가격 조회 (재시도 로직 포함)
+    현재 가격 조회 (Redis 캐시 우선)
+    
+    1. Redis 캐시 확인 (있으면 즉시 반환)
+    2. 없으면 Binance API 호출
+    3. 결과를 캐시에 저장 (TTL: 1초)
     
     Args:
         symbol: 거래 심볼 (예: BTCUSDT)
@@ -35,6 +50,17 @@ async def get_current_price(symbol: str) -> Decimal:
         HTTPException: API 호출 실패 시
     """
     
+    # ✅ 1단계: Redis 캐시 확인
+    if REDIS_AVAILABLE and redis_cache:
+        try:
+            cached_price = await redis_cache.get_price(symbol)
+            if cached_price is not None:
+                logger.debug(f"💾 캐시 히트: {symbol} = ${cached_price}")
+                return Decimal(str(cached_price))
+        except Exception as e:
+            logger.debug(f"캐시 조회 실패 (무시): {e}")
+    
+    # ✅ 2단계: Binance API 호출 (재시도 로직)
     for attempt in range(MAX_RETRIES):
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
@@ -48,11 +74,17 @@ async def get_current_price(symbol: str) -> Decimal:
                     data = response.json()
                     price = Decimal(str(data["price"]))
                     
-                    logger.info(f"✅ 가격 조회 성공: {symbol} = ${price}")
+                    # ✅ 3단계: 캐시 저장
+                    if REDIS_AVAILABLE and redis_cache:
+                        try:
+                            await redis_cache.set_price(symbol, float(price), ttl=1)
+                        except Exception as e:
+                            logger.debug(f"캐시 저장 실패 (무시): {e}")
+                    
+                    logger.info(f"🌐 API 호출: {symbol} = ${price}")
                     return price
                 
                 elif response.status_code == 400:
-                    # 잘못된 심볼
                     logger.error(f"❌ 잘못된 심볼: {symbol}")
                     raise HTTPException(
                         status_code=400,
@@ -62,14 +94,14 @@ async def get_current_price(symbol: str) -> Decimal:
                 else:
                     logger.warning(f"⚠️ Binance API 오류: Status {response.status_code}")
                     if attempt < MAX_RETRIES - 1:
-                        continue  # 재시도
+                        continue
                     raise HTTPException(
                         status_code=503,
                         detail=f"시장 가격 조회 실패 (상태 코드: {response.status_code})"
                     )
         
         except httpx.TimeoutException:
-            logger.warning(f"⏱️ 타임아웃 발생 (시도 {attempt + 1}/{MAX_RETRIES}): {symbol}")
+            logger.warning(f"⏱️ 타임아웃 (시도 {attempt + 1}/{MAX_RETRIES}): {symbol}")
             if attempt < MAX_RETRIES - 1:
                 continue
             raise HTTPException(
@@ -102,7 +134,6 @@ async def get_current_price(symbol: str) -> Decimal:
                 detail=f"가격 조회 중 오류 발생: {str(e)}"
             )
     
-    # 모든 재시도 실패
     raise HTTPException(
         status_code=503,
         detail=f"{symbol} 가격 조회 실패 (최대 재시도 횟수 초과)"
@@ -111,7 +142,11 @@ async def get_current_price(symbol: str) -> Decimal:
 
 async def get_multiple_prices(symbols: List[str]) -> Dict[str, Decimal]:
     """
-    여러 심볼의 가격을 동시에 조회
+    여러 심볼의 가격을 동시에 조회 (Redis 캐시 최적화)
+    
+    1. Redis에서 캐시된 가격 일괄 조회
+    2. 없는 것만 Binance API 호출
+    3. 결과 캐시 저장
     
     Args:
         symbols: 심볼 리스트
@@ -120,30 +155,59 @@ async def get_multiple_prices(symbols: List[str]) -> Dict[str, Decimal]:
         Dict[str, Decimal]: 심볼별 가격
     """
     
-    try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            # ✅ 모든 가격 한번에 조회
-            response = await client.get(f"{BINANCE_API_BASE}/ticker/price")
-            
-            if response.status_code == 200:
-                all_prices = response.json()
-                
-                # 필요한 심볼만 필터링
-                result = {}
-                for item in all_prices:
-                    if item["symbol"] in symbols:
-                        result[item["symbol"]] = Decimal(str(item["price"]))
-                
-                logger.info(f"✅ 다중 가격 조회 성공: {len(result)}개")
-                return result
-            
-            else:
-                logger.error(f"❌ 다중 가격 조회 실패: Status {response.status_code}")
-                return {}
+    result = {}
+    missing_symbols = list(symbols)
     
-    except Exception as e:
-        logger.error(f"❌ 다중 가격 조회 오류: {e}")
-        return {}
+    # ✅ 1단계: Redis 캐시 일괄 조회
+    if REDIS_AVAILABLE and redis_cache:
+        try:
+            cached = await redis_cache.get_multiple_prices(symbols)
+            for symbol, price in cached.items():
+                result[symbol] = Decimal(str(price))
+                if symbol in missing_symbols:
+                    missing_symbols.remove(symbol)
+            
+            if cached:
+                logger.info(f"💾 캐시 히트: {len(cached)}개 심볼")
+        except Exception as e:
+            logger.debug(f"캐시 일괄 조회 실패 (무시): {e}")
+    
+    # ✅ 2단계: 없는 것만 API 호출
+    if missing_symbols:
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+                response = await client.get(f"{BINANCE_API_BASE}/ticker/price")
+                
+                if response.status_code == 200:
+                    all_prices = response.json()
+                    
+                    for item in all_prices:
+                        symbol = item["symbol"]
+                        if symbol in missing_symbols:
+                            price = Decimal(str(item["price"]))
+                            result[symbol] = price
+                            
+                            # ✅ 3단계: 캐시 저장
+                            if REDIS_AVAILABLE and redis_cache:
+                                try:
+                                    await redis_cache.set_price(symbol, float(price), ttl=1)
+                                except:
+                                    pass
+                    
+                    logger.info(f"🌐 API 호출: {len(missing_symbols)}개 심볼")
+                else:
+                    logger.error(f"❌ 다중 가격 조회 실패: Status {response.status_code}")
+        
+        except Exception as e:
+            logger.error(f"❌ 다중 가격 조회 오류: {e}")
+    
+    # 통계 로그
+    if len(result) > 0:
+        cache_hits = len(result) - len(missing_symbols)
+        hit_rate = (cache_hits / len(result)) * 100 if result else 0
+        logger.info(f"📊 캐시 히트율: {hit_rate:.1f}% ({cache_hits}/{len(result)})")
+    
+    return result
 
 
 async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Decimal:
@@ -163,7 +227,7 @@ async def execute_market_order(symbol: str, side: str, quantity: Decimal) -> Dec
     
     logger.info(f"🔄 시장가 주문 시뮬레이션: {side} {quantity} {symbol}")
     
-    # 현재가 조회
+    # 현재가 조회 (캐시 우선)
     price = await get_current_price(symbol)
     
     logger.info(f"✅ 체결 가격: ${price}")
@@ -192,7 +256,6 @@ async def get_24h_ticker(symbol: str) -> Optional[Dict]:
                 data = response.json()
                 logger.debug(f"✅ 24h 티커 조회 성공: {symbol}")
                 return data
-            
             else:
                 logger.warning(f"⚠️ 24h 티커 조회 실패: {symbol} - Status {response.status_code}")
                 return None
@@ -276,11 +339,10 @@ async def get_historical_data(
             if response.status_code == 200:
                 klines = response.json()
                 
-                # 데이터 포맷 변환
                 formatted_data = []
                 for k in klines:
                     formatted_data.append({
-                        "time": k[0],  # 타임스탬프
+                        "time": k[0],
                         "open": float(k[1]),
                         "high": float(k[2]),
                         "low": float(k[3]),
@@ -290,7 +352,6 @@ async def get_historical_data(
                 
                 logger.info(f"✅ 과거 데이터 조회 성공: {symbol} - {len(formatted_data)}개")
                 return formatted_data
-            
             else:
                 logger.error(f"❌ 과거 데이터 조회 실패: Status {response.status_code}")
                 return []
@@ -325,7 +386,6 @@ async def get_recent_trades(symbol: str, limit: int = 50) -> List[Dict]:
             if response.status_code == 200:
                 trades = response.json()
                 
-                # 데이터 포맷 변환
                 formatted_trades = []
                 for trade in trades:
                     formatted_trades.append({
@@ -338,7 +398,6 @@ async def get_recent_trades(symbol: str, limit: int = 50) -> List[Dict]:
                 
                 logger.debug(f"✅ 거래 내역 조회 성공: {symbol} - {len(formatted_trades)}개")
                 return formatted_trades
-            
             else:
                 logger.warning(f"⚠️ 거래 내역 조회 실패: Status {response.status_code}")
                 return []
@@ -347,10 +406,6 @@ async def get_recent_trades(symbol: str, limit: int = 50) -> List[Dict]:
         logger.error(f"❌ 거래 내역 조회 오류: {e}")
         return []
 
-
-# ================================
-# 테스트용 함수
-# ================================
 
 async def test_connection() -> bool:
     """
@@ -397,3 +452,51 @@ async def get_server_time() -> int:
     except Exception as e:
         logger.error(f"❌ 서버 시간 조회 오류: {e}")
         return 0
+
+
+# ================================
+# 추가 고급 기능
+# ================================
+
+async def get_order_book(symbol: str, limit: int = 20) -> Dict:
+    """
+    호가창 조회
+    
+    Args:
+        symbol: 거래 심볼
+        limit: 호가 개수 (5, 10, 20, 50, 100, 500, 1000, 5000)
+    
+    Returns:
+        Dict: {"bids": [[가격, 수량], ...], "asks": [[가격, 수량], ...]}
+    """
+    
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            response = await client.get(
+                f"{BINANCE_API_BASE}/depth",
+                params={"symbol": symbol, "limit": limit}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "bids": [[Decimal(p), Decimal(q)] for p, q in data["bids"]],
+                    "asks": [[Decimal(p), Decimal(q)] for p, q in data["asks"]]
+                }
+            else:
+                logger.error(f"❌ 호가창 조회 실패: Status {response.status_code}")
+                return {"bids": [], "asks": []}
+    
+    except Exception as e:
+        logger.error(f"❌ 호가창 조회 오류: {e}")
+        return {"bids": [], "asks": []}
+
+
+async def check_binance_status() -> bool:
+    """
+    Binance API 상태 확인
+    
+    Returns:
+        bool: 정상 여부
+    """
+    return await test_connection()

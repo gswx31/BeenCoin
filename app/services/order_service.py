@@ -1,274 +1,297 @@
 # app/services/order_service.py
 """
-주문 서비스 - 원래 구조 (TradingAccount)
+주문 서비스 - 실제 거래소 시뮬레이션
+최근 체결 내역 기반으로 주문 처리
 """
+
 from sqlmodel import Session, select
-from app.models.database import Order, TradingAccount, Position, User, Transaction, OrderSide, OrderType, OrderStatus
+from app.models.database import (
+    Order, TradingAccount, Position, Transaction,
+    OrderSide, OrderType, OrderStatus
+)
 from app.schemas.order import OrderCreate
-from app.services.binance_service import get_current_price
-from decimal import Decimal, InvalidOperation
-from fastapi import HTTPException
+from app.services.binance_service import get_current_price, get_recent_trades
+from decimal import Decimal
 from datetime import datetime
+from fastapi import HTTPException
 import logging
 
 logger = logging.getLogger(__name__)
 
-# 거래 수수료율 (0.1%)
-FEE_RATE = Decimal("0.001")
 
-
-async def create_order(
-    session: Session,
-    user_id: str,  # UUID string
-    order_data: OrderCreate
-) -> Order:
+async def create_order(session: Session, user_id: str, order_data: OrderCreate) -> Order:
     """
-    주문 생성 및 처리
+    주문 생성 (실제 거래소 방식)
+    
+    로직:
+    1. 최근 체결 내역 조회 (Binance API)
+    2. 주문 수량만큼 체결 내역에서 체결
+    3. 매수: 낮은 가격부터 체결
+    4. 매도: 높은 가격부터 체결
     """
     
-    logger.info(
-        f"📝 주문 생성 시작: User={user_id}, "
-        f"Symbol={order_data.symbol}, Side={order_data.side}, "
-        f"Type={order_data.order_type}, Quantity={order_data.quantity}"
-    )
-    
-    # ================================
-    # 1. 입력 검증
-    # ================================
     try:
-        quantity = Decimal(str(order_data.quantity))
-        if quantity <= 0:
-            raise ValueError("수량은 0보다 커야 합니다")
-        
-        price = None
-        if order_data.price:
-            price = Decimal(str(order_data.price))
-            if price <= 0:
-                raise ValueError("가격은 0보다 커야 합니다")
-    
-    except (ValueError, InvalidOperation) as e:
-        logger.error(f"❌ 입력 검증 실패: {e}")
-        raise HTTPException(status_code=400, detail=f"잘못된 입력값: {str(e)}")
-    
-    # ================================
-    # 2. 사용자 및 계정 조회
-    # ================================
-    try:
-        user = session.get(User, user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
-        
+        # 계정 조회
         account = session.exec(
             select(TradingAccount).where(TradingAccount.user_id == user_id)
         ).first()
         
         if not account:
-            # 계정이 없으면 생성
-            account = TradingAccount(
-                user_id=user_id,
-                balance=Decimal("1000000"),  # 초기 잔액 100만원
-                total_profit=Decimal("0"),
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
-            )
-            session.add(account)
-            session.commit()
-            session.refresh(account)
-            logger.info(f"✅ 새 거래 계정 생성: Account ID={account.id}")
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ 계정 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail="계정 조회 중 오류 발생")
-    
-    # ================================
-    # 3. 시장가 조회
-    # ================================
-    if order_data.order_type == OrderType.MARKET or order_data.order_type == "MARKET":
-        try:
-            execution_price = await get_current_price(order_data.symbol)
-            logger.info(f"💵 현재 시장가: {order_data.symbol} = ${execution_price}")
-        except Exception as e:
-            logger.error(f"❌ 시장가 조회 실패: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"시장가격 조회 실패: {str(e)}"
-            )
-    else:
-        execution_price = price
-    
-    # ================================
-    # 4. 잔액/포지션 확인
-    # ================================
-    try:
-        order_value = quantity * execution_price
-        fee = order_value * FEE_RATE
+            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
         
-        side_value = order_data.side.value if hasattr(order_data.side, 'value') else order_data.side
-        
-        if side_value == "BUY":
-            # 매수: 잔액 확인
-            total_cost = order_value + fee
-            if account.balance < total_cost:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"잔액 부족 - 보유: ${float(account.balance):.2f}, 필요: ${float(total_cost):.2f}"
-                )
-            logger.info(f"✅ 잔액 충분: ${account.balance} >= ${total_cost}")
-        
-        elif side_value == "SELL":
-            # 매도: 포지션 확인
-            position = session.exec(
-                select(Position).where(
-                    Position.account_id == account.id,
-                    Position.symbol == order_data.symbol
-                )
-            ).first()
-            
-            if not position or position.quantity < quantity:
-                available = position.quantity if position else Decimal("0")
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"수량 부족 - 보유: {float(available):.8f}, 필요: {float(quantity):.8f}"
-                )
-            logger.info(f"✅ 수량 충분: {position.quantity} >= {quantity}")
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ 잔액/포지션 확인 실패: {e}")
-        raise HTTPException(status_code=500, detail="잔액 확인 중 오류 발생")
-    
-    # ================================
-    # 5. 주문 객체 생성
-    # ================================
-    try:
-        new_order = Order(
+        # 주문 생성
+        order = Order(
             account_id=account.id,
             user_id=user_id,
             symbol=order_data.symbol,
-            side=order_data.side.value if hasattr(order_data.side, 'value') else order_data.side,
-            order_type=order_data.order_type.value if hasattr(order_data.order_type, 'value') else order_data.order_type,
-            quantity=quantity,
-            price=execution_price if order_data.order_type == OrderType.MARKET or order_data.order_type == "MARKET" else price,
+            side=OrderSide(order_data.side),
+            order_type=OrderType(order_data.order_type),
             order_status=OrderStatus.PENDING,
+            quantity=Decimal(str(order_data.quantity)),
+            price=Decimal(str(order_data.price)) if order_data.price else None,
             filled_quantity=Decimal("0"),
             average_price=None,
-            fee=Decimal("0"),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
         
-        session.add(new_order)
-        session.commit()
-        session.refresh(new_order)
+        session.add(order)
+        session.flush()
         
-        logger.info(f"✅ 주문 생성 완료: Order ID={new_order.id}")
+        # ✅ 시장가 주문 → 최근 체결 내역으로 즉시 체결
+        if order.order_type == OrderType.MARKET:
+            await execute_order_with_recent_trades(session, order)
+            logger.info(f"✅ 시장가 주문 체결 완료: {order.symbol}")
+        
+        # ✅ 지정가 주문 → 체결 가능하면 즉시 체결, 아니면 대기
+        elif order.order_type == OrderType.LIMIT:
+            # 현재가 확인
+            current_price = await get_current_price(order_data.symbol)
+            
+            # 체결 가능 여부 판단
+            can_fill = False
+            if order.side == OrderSide.BUY and current_price <= order.price:
+                can_fill = True  # 매수: 현재가 ≤ 주문가
+            elif order.side == OrderSide.SELL and current_price >= order.price:
+                can_fill = True  # 매도: 현재가 ≥ 주문가
+            
+            if can_fill:
+                await execute_order_with_recent_trades(session, order)
+                logger.info(f"✅ 지정가 주문 즉시 체결: {order.symbol} @ ${order.price}")
+            else:
+                logger.info(f"⏳ 지정가 주문 대기: {order.symbol} @ ${order.price}")
+        
+        session.commit()
+        session.refresh(order)
+        
+        return order
     
+    except HTTPException:
+        raise
     except Exception as e:
         session.rollback()
         logger.error(f"❌ 주문 생성 실패: {e}")
         raise HTTPException(status_code=500, detail=f"주문 생성 실패: {str(e)}")
-    
-    # ================================
-    # 6. 시장가 주문 즉시 체결
-    # ================================
-    if order_data.order_type == OrderType.MARKET or order_data.order_type == "MARKET":
-        try:
-            _fill_market_order(session, new_order, account, execution_price, quantity, fee)
-            logger.info(f"✅ 시장가 주문 체결 완료: Order ID={new_order.id}")
-        except Exception as e:
-            session.rollback()
-            logger.error(f"❌ 주문 체결 실패: {e}")
-            
-            new_order.order_status = OrderStatus.REJECTED
-            session.add(new_order)
-            session.commit()
-            
-            raise HTTPException(status_code=500, detail=f"주문 체결 실패: {str(e)}")
-    
-    return new_order
 
 
-def _fill_market_order(
-    session: Session,
-    order: Order,
-    account: TradingAccount,
-    price: Decimal,
-    quantity: Decimal,
-    fee: Decimal
-):
+async def execute_order_with_recent_trades(session: Session, order: Order):
     """
-    시장가 주문 체결 처리
+    최근 체결 내역 기반으로 주문 실행 (실제 거래소 방식)
+    
+    예시:
+    - 최근 체결: [120원, 119.5원, 121원, 120.5원, ...]
+    - 매수 0.5 BTC 주문
+    - → 낮은 가격부터: 119.5원(0.2) + 120원(0.15) + 120.5원(0.15) = 0.5 BTC
+    - → 평균 체결가: 120원
     """
     
     try:
-        # 포지션 조회 또는 생성
-        position = session.exec(
-            select(Position).where(
-                Position.account_id == account.id,
-                Position.symbol == order.symbol
-            )
-        ).first()
+        # 계정 조회
+        account = session.get(TradingAccount, order.account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
         
-        if not position:
-            position = Position(
-                account_id=account.id,
-                symbol=order.symbol,
-                quantity=Decimal("0"),
-                average_price=Decimal("0"),
-                current_price=price,
-                current_value=Decimal("0"),
-                unrealized_profit=Decimal("0"),
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
-            )
-            session.add(position)
-            session.flush()
+        # ✅ 1단계: 최근 체결 내역 조회 (Binance API)
+        recent_trades = await get_recent_trades(order.symbol, limit=100)
         
-        # 매수 처리
-        if order.side == "BUY":
+        if not recent_trades:
+            # API 실패 시 현재가로 fallback
+            logger.warning(f"⚠️ 체결 내역 조회 실패, 현재가로 체결: {order.symbol}")
+            current_price = await get_current_price(order.symbol)
+            await execute_order_simple(session, order, current_price)
+            return
+        
+        # ✅ 2단계: 체결 내역 정렬
+        if order.side == OrderSide.BUY:
+            # 매수: 낮은 가격부터 체결
+            sorted_trades = sorted(recent_trades, key=lambda x: x['price'])
+        else:
+            # 매도: 높은 가격부터 체결
+            sorted_trades = sorted(recent_trades, key=lambda x: x['price'], reverse=True)
+        
+        # ✅ 3단계: 주문 수량만큼 체결
+        remaining_quantity = order.quantity
+        total_cost = Decimal("0")
+        filled_quantity = Decimal("0")
+        
+        for trade in sorted_trades:
+            if remaining_quantity <= 0:
+                break
+            
+            trade_price = Decimal(str(trade['price']))
+            trade_quantity = Decimal(str(trade['quantity']))
+            
+            # 이번 체결량 결정
+            fill_qty = min(remaining_quantity, trade_quantity)
+            
+            # 체결
+            total_cost += fill_qty * trade_price
+            filled_quantity += fill_qty
+            remaining_quantity -= fill_qty
+            
+            logger.debug(f"  체결: {fill_qty} @ ${trade_price}")
+        
+        # 체결 완료 확인
+        if filled_quantity < order.quantity:
+            logger.warning(f"⚠️ 부분 체결: {filled_quantity}/{order.quantity}")
+        
+        # 평균 체결가 계산
+        average_price = total_cost / filled_quantity if filled_quantity > 0 else Decimal("0")
+        
+        logger.info(f"📊 체결 완료: {filled_quantity} {order.symbol} @ 평균 ${average_price:.2f}")
+        
+        # ✅ 4단계: 잔액/포지션 업데이트
+        await finalize_order_execution(
+            session, order, account, 
+            filled_quantity, average_price
+        )
+    
+    except Exception as e:
+        session.rollback()
+        logger.error(f"❌ 주문 체결 실패: {e}")
+        raise
+
+
+async def execute_order_simple(session: Session, order: Order, price: Decimal):
+    """
+    단순 체결 (API 실패 시 fallback)
+    """
+    
+    try:
+        account = session.get(TradingAccount, order.account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
+        
+        await finalize_order_execution(
+            session, order, account,
+            order.quantity, price
+        )
+    
+    except Exception as e:
+        session.rollback()
+        logger.error(f"❌ 단순 체결 실패: {e}")
+        raise
+
+
+async def finalize_order_execution(
+    session: Session,
+    order: Order,
+    account: TradingAccount,
+    filled_quantity: Decimal,
+    average_price: Decimal
+):
+    """
+    주문 체결 최종 처리
+    - 잔액 업데이트
+    - 포지션 업데이트
+    - 거래 내역 기록
+    """
+    
+    try:
+        # 수수료 계산 (0.1%)
+        fee_rate = Decimal("0.001")
+        total_amount = filled_quantity * average_price
+        fee = total_amount * fee_rate
+        
+        # ===== 매수 =====
+        if order.side == OrderSide.BUY:
+            # 필요 금액 확인
+            required_balance = total_amount + fee
+            
+            if account.balance < required_balance:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"잔액 부족 (필요: ${required_balance:.2f}, 보유: ${account.balance:.2f})"
+                )
+            
             # 잔액 차감
-            total_cost = quantity * price + fee
-            account.balance -= total_cost
+            account.balance -= required_balance
             
             # 포지션 업데이트
-            if position.quantity > 0:
-                # 평균가 계산
-                old_cost = position.quantity * position.average_price
-                new_cost = quantity * price
-                new_quantity = position.quantity + quantity
-                
-                position.average_price = (old_cost + new_cost) / new_quantity
-                position.quantity = new_quantity
+            position = session.exec(
+                select(Position).where(
+                    Position.account_id == account.id,
+                    Position.symbol == order.symbol
+                )
+            ).first()
+            
+            if not position:
+                # 신규 포지션 생성
+                position = Position(
+                    account_id=account.id,
+                    symbol=order.symbol,
+                    quantity=filled_quantity,
+                    average_price=average_price,
+                    current_price=average_price,
+                    current_value=filled_quantity * average_price,
+                    unrealized_profit=Decimal("0"),
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                session.add(position)
             else:
-                position.quantity = quantity
-                position.average_price = price
+                # 기존 포지션 업데이트 (평균가 계산)
+                total_qty = position.quantity + filled_quantity
+                total_cost = (position.quantity * position.average_price) + total_amount
+                position.average_price = total_cost / total_qty
+                position.quantity = total_qty
+                position.current_value = total_qty * average_price
+                position.unrealized_profit = total_qty * (average_price - position.average_price)
+                position.updated_at = datetime.utcnow()
             
-            position.current_price = price
-            position.current_value = position.quantity * price
-            position.unrealized_profit = position.quantity * (price - position.average_price)
-            
-            logger.info(f"💰 매수 체결: Qty={quantity}, Avg=${position.average_price:.2f}, Balance=${account.balance:.2f}")
+            logger.info(
+                f"💰 매수 체결: {filled_quantity} @ ${average_price:.2f}, "
+                f"수수료: ${fee:.2f}, 잔액: ${account.balance:.2f}"
+            )
         
-        # 매도 처리
-        elif order.side == "SELL":
-            # 수익 계산
-            profit = quantity * (price - position.average_price)
+        # ===== 매도 =====
+        else:
+            # 포지션 확인
+            position = session.exec(
+                select(Position).where(
+                    Position.account_id == account.id,
+                    Position.symbol == order.symbol
+                )
+            ).first()
             
-            # 잔액 증가
-            sell_amount = quantity * price
-            account.balance += (sell_amount - fee)
+            if not position or position.quantity < filled_quantity:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"수량 부족 (필요: {filled_quantity}, 보유: {position.quantity if position else 0})"
+                )
+            
+            # 수익 계산
+            profit = filled_quantity * (average_price - position.average_price)
+            
+            # 잔액 증가 (매도 대금 - 수수료)
+            account.balance += (total_amount - fee)
             account.total_profit += profit
             
-            # 포지션 업데이트
-            position.quantity -= quantity
-            
+            # 포지션 차감
+            position.quantity -= filled_quantity
             if position.quantity > 0:
-                position.current_price = price
-                position.current_value = position.quantity * price
-                position.unrealized_profit = position.quantity * (price - position.average_price)
+                position.current_value = position.quantity * average_price
+                position.unrealized_profit = position.quantity * (average_price - position.average_price)
             else:
                 # 전체 청산
                 position.quantity = Decimal("0")
@@ -276,12 +299,17 @@ def _fill_market_order(
                 position.unrealized_profit = Decimal("0")
                 position.current_price = Decimal("0")
             
-            logger.info(f"💸 매도 체결: Qty={quantity}, Profit=${profit:.2f}, Balance=${account.balance:.2f}")
+            position.updated_at = datetime.utcnow()
+            
+            logger.info(
+                f"💸 매도 체결: {filled_quantity} @ ${average_price:.2f}, "
+                f"수익: ${profit:.2f}, 수수료: ${fee:.2f}, 잔액: ${account.balance:.2f}"
+            )
         
         # 주문 상태 업데이트
         order.order_status = OrderStatus.FILLED
-        order.filled_quantity = quantity
-        order.average_price = price
+        order.filled_quantity = filled_quantity
+        order.average_price = average_price
         order.fee = fee
         order.updated_at = datetime.utcnow()
         
@@ -290,16 +318,15 @@ def _fill_market_order(
             user_id=account.user_id,
             order_id=order.id,
             symbol=order.symbol,
-            side=OrderSide(order.side),
-            quantity=quantity,
-            price=price,
+            side=order.side,
+            quantity=filled_quantity,
+            price=average_price,
             fee=fee,
             timestamp=datetime.utcnow()
         )
         
         # DB 커밋
         account.updated_at = datetime.utcnow()
-        position.updated_at = datetime.utcnow()
         
         session.add_all([order, account, position, transaction])
         session.commit()
@@ -308,22 +335,22 @@ def _fill_market_order(
         session.refresh(account)
         session.refresh(position)
     
+    except HTTPException:
+        raise
     except Exception as e:
         session.rollback()
-        logger.error(f"❌ 체결 처리 중 오류: {e}")
+        logger.error(f"❌ 체결 처리 실패: {e}")
         raise
 
 
 def get_user_orders(
     session: Session,
-    user_id: str,  # UUID string
+    user_id: str,
     symbol: str = None,
     status: str = None,
     limit: int = 100
 ) -> list:
-    """
-    사용자 주문 목록 조회
-    """
+    """사용자 주문 목록 조회"""
     
     try:
         query = select(Order).where(Order.user_id == user_id)
@@ -347,9 +374,17 @@ def get_user_orders(
         return []
 
 
-def cancel_order(session: Session, order_id: int, user_id: str) -> Order:  # UUID string
+def cancel_order(session: Session, user_id: str, order_id: int) -> Order:
     """
-    주문 취소
+    주문 취소 (시그니처 수정)
+    
+    Args:
+        session: DB 세션
+        user_id: 사용자 ID (UUID string)
+        order_id: 주문 ID
+    
+    Returns:
+        Order: 취소된 주문
     """
     
     try:

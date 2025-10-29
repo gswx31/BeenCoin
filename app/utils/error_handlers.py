@@ -145,7 +145,7 @@ from app.utils.error_handlers import (
     InvalidSymbolError
 )
 
-async def create_order(session: Session, user_id: int, order_data: OrderCreate) -> Order:
+async def create_order(session: Session, user_id: str, order_data: OrderCreate) -> Order:
     # 심볼 검증
     if order_data.symbol not in settings.SUPPORTED_SYMBOLS:
         raise InvalidSymbolError(order_data.symbol)
@@ -154,7 +154,7 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
     
 def update_position(
     session: Session, 
-    user_id: int, 
+    user_id: str, 
     symbol: str, 
     side: str, 
     quantity: Decimal, 
