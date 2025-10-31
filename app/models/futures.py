@@ -1,13 +1,13 @@
 # app/models/futures.py
 """
-선물 거래 데이터베이스 모델
+선물 거래 데이터베이스 모델 - UUID 보안 적용
 """
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-import uuid  # ✅ UUID 임포트
+import uuid
 
 
 # =====================================================
@@ -24,8 +24,8 @@ class FuturesOrderType(str, Enum):
     """선물 주문 타입"""
     MARKET = "MARKET"          # 시장가
     LIMIT = "LIMIT"            # 지정가
-    STOP_MARKET = "STOP_MARKET"  # 손절 시장가
-    TAKE_PROFIT_MARKET = "TAKE_PROFIT_MARKET"  # 익절 시장가
+    STOP_LOSS = "STOP_LOSS"    # 손절 (로스컷)
+    TAKE_PROFIT = "TAKE_PROFIT"  # 익절 (베네핏컷)
 
 
 class FuturesPositionStatus(str, Enum):
@@ -40,9 +40,7 @@ class FuturesPositionStatus(str, Enum):
 # =====================================================
 
 class FuturesAccount(SQLModel, table=True):
-    """
-    선물 거래 계정 (현물 계정과 분리)
-    """
+    """선물 거래 계정 (현물 계정과 분리)"""
     __tablename__ = "futures_accounts"
     
     id: str = Field(
@@ -55,7 +53,7 @@ class FuturesAccount(SQLModel, table=True):
     
     # 잔액
     balance: Decimal = Field(
-        default=Decimal("100000"),  # ✅ 100,000 USDT로 변경
+        default=Decimal("100000"),
         max_digits=20,
         decimal_places=8,
         description="사용 가능한 증거금"
@@ -110,15 +108,7 @@ class FuturesAccount(SQLModel, table=True):
 # =====================================================
 
 class FuturesPosition(SQLModel, table=True):
-    """
-    선물 포지션
-    
-    예시:
-    - BTC 10x 롱 포지션
-    - 진입가: 50,000 USDT
-    - 수량: 0.1 BTC
-    - 증거금: 500 USDT (50,000 * 0.1 / 10)
-    """
+    """선물 포지션"""
     __tablename__ = "futures_positions"
     
     id: str = Field(
@@ -127,7 +117,7 @@ class FuturesPosition(SQLModel, table=True):
         index=True,
         description="포지션 UUID"
     )
-    account_id: str = Field(foreign_key="futures_accounts.id", index=True)  # ✅ UUID
+    account_id: str = Field(foreign_key="futures_accounts.id", index=True)
     
     # 기본 정보
     symbol: str = Field(index=True, max_length=20)
@@ -194,6 +184,20 @@ class FuturesPosition(SQLModel, table=True):
         description="진입 수수료"
     )
     
+    # 손절/익절 설정 (자동 청산)
+    stop_loss_price: Optional[Decimal] = Field(
+        default=None,
+        max_digits=20,
+        decimal_places=8,
+        description="손절가 (로스컷) - 이 가격 도달 시 자동 청산"
+    )
+    take_profit_price: Optional[Decimal] = Field(
+        default=None,
+        max_digits=20,
+        decimal_places=8,
+        description="익절가 (베네핏컷) - 이 가격 도달 시 자동 청산"
+    )
+    
     # 시간
     opened_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     closed_at: Optional[datetime] = None
@@ -240,6 +244,26 @@ class FuturesPosition(SQLModel, table=True):
             return self.entry_price - (liquidation_margin / self.quantity)
         else:  # SHORT
             return self.entry_price + (liquidation_margin / self.quantity)
+    
+    def should_stop_loss(self, current_price: Decimal) -> bool:
+        """손절 조건 체크"""
+        if not self.stop_loss_price:
+            return False
+        
+        if self.side == FuturesPositionSide.LONG:
+            return current_price <= self.stop_loss_price
+        else:  # SHORT
+            return current_price >= self.stop_loss_price
+    
+    def should_take_profit(self, current_price: Decimal) -> bool:
+        """익절 조건 체크"""
+        if not self.take_profit_price:
+            return False
+        
+        if self.side == FuturesPositionSide.LONG:
+            return current_price >= self.take_profit_price
+        else:  # SHORT
+            return current_price <= self.take_profit_price
 
 
 # =====================================================
@@ -256,9 +280,9 @@ class FuturesOrder(SQLModel, table=True):
         index=True,
         description="주문 UUID"
     )
-    account_id: str = Field(foreign_key="futures_accounts.id", index=True)  # ✅ UUID
+    account_id: str = Field(foreign_key="futures_accounts.id", index=True)
     user_id: str = Field(foreign_key="users.id", index=True)
-    position_id: Optional[str] = Field(  # ✅ UUID
+    position_id: Optional[str] = Field(
         default=None,
         foreign_key="futures_positions.id"
     )
@@ -303,14 +327,14 @@ class FuturesTransaction(SQLModel, table=True):
         description="거래 UUID"
     )
     user_id: str = Field(foreign_key="users.id", index=True)
-    position_id: str = Field(foreign_key="futures_positions.id", index=True)  # ✅ UUID
+    position_id: str = Field(foreign_key="futures_positions.id", index=True)
     
     # 거래 정보
     symbol: str = Field(index=True, max_length=20)
     side: FuturesPositionSide
     action: str = Field(
-        max_length=10,
-        description="OPEN(진입) 또는 CLOSE(청산)"
+        max_length=20,
+        description="OPEN(진입), CLOSE(청산), STOP_LOSS(손절), TAKE_PROFIT(익절)"
     )
     
     # 수량 및 가격

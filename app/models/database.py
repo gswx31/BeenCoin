@@ -1,7 +1,6 @@
 ﻿# app/models/database.py
 """
-데이터베이스 모델 정의 - 수정 버전
-주문 금액 락(locked_balance) 기능 추가
+데이터베이스 모델 정의 - UUID 보안 적용 버전
 """
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
@@ -25,8 +24,8 @@ class OrderType(str, Enum):
     """주문 타입"""
     MARKET = "MARKET"  # 시장가
     LIMIT = "LIMIT"    # 지정가
-    STOP_LOSS = "STOP_LOSS"  # 손절
-    TAKE_PROFIT = "TAKE_PROFIT"  # 익절
+    STOP_LOSS = "STOP_LOSS"  # 손절 (로스컷)
+    TAKE_PROFIT = "TAKE_PROFIT"  # 익절 (베네핏컷)
 
 
 class OrderStatus(str, Enum):
@@ -63,25 +62,26 @@ class User(SQLModel, table=True):
 
 
 # =====================================================
-# 거래 계정 모델 (수정)
+# 거래 계정 모델
 # =====================================================
 
 class TradingAccount(SQLModel, table=True):
     """
     거래 계정 - locked_balance 추가
-    
-    - balance: 사용 가능한 잔액
-    - locked_balance: 미체결 주문에 걸려있는 금액
-    - total_balance: balance + locked_balance (계산 필드)
     """
     __tablename__ = "trading_accounts"
     
-    id: int = Field(default=None, primary_key=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        index=True,
+        description="계정 UUID"
+    )
     user_id: str = Field(foreign_key="users.id", index=True, unique=True)
     
     # 잔액 정보
     balance: Decimal = Field(
-        default=Decimal("100000"),  # ✅ 100,000 USDT로 변경
+        default=Decimal("100000"),
         max_digits=20,
         decimal_places=8,
         description="사용 가능한 잔액"
@@ -126,8 +126,13 @@ class Order(SQLModel, table=True):
     """주문"""
     __tablename__ = "orders"
     
-    id: int = Field(default=None, primary_key=True)
-    account_id: int = Field(foreign_key="trading_accounts.id", index=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        index=True,
+        description="주문 UUID"
+    )
+    account_id: str = Field(foreign_key="trading_accounts.id", index=True)
     user_id: str = Field(foreign_key="users.id", index=True)
     
     # 주문 정보
@@ -162,12 +167,12 @@ class Order(SQLModel, table=True):
         decimal_places=8
     )
     
-    # 손절/익절 가격 (추가)
+    # 손절/익절 가격 (로스컷/베네핏컷)
     stop_price: Optional[Decimal] = Field(
         default=None,
         max_digits=20,
         decimal_places=8,
-        description="손절 또는 익절 가격"
+        description="손절(STOP_LOSS) 또는 익절(TAKE_PROFIT) 트리거 가격"
     )
     
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
@@ -186,8 +191,13 @@ class Position(SQLModel, table=True):
     """포지션 (보유 자산)"""
     __tablename__ = "positions"
     
-    id: int = Field(default=None, primary_key=True)
-    account_id: int = Field(foreign_key="trading_accounts.id", index=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        index=True,
+        description="포지션 UUID"
+    )
+    account_id: str = Field(foreign_key="trading_accounts.id", index=True)
     symbol: str = Field(index=True, max_length=20)
     
     # 수량/가격
@@ -233,9 +243,14 @@ class Transaction(SQLModel, table=True):
     """거래 내역"""
     __tablename__ = "transactions"
     
-    id: int = Field(default=None, primary_key=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        index=True,
+        description="거래 UUID"
+    )
     user_id: str = Field(foreign_key="users.id", index=True)
-    order_id: int = Field(foreign_key="orders.id", index=True)
+    order_id: str = Field(foreign_key="orders.id", index=True)
     
     # 거래 정보
     symbol: str = Field(index=True, max_length=20)
@@ -259,14 +274,19 @@ class Transaction(SQLModel, table=True):
 
 
 # =====================================================
-# 가격 알림 모델 (신규)
+# 가격 알림 모델
 # =====================================================
 
 class PriceAlert(SQLModel, table=True):
     """가격 알림"""
     __tablename__ = "price_alerts"
     
-    id: int = Field(default=None, primary_key=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        index=True,
+        description="알림 UUID"
+    )
     user_id: str = Field(foreign_key="users.id", index=True)
     symbol: str = Field(index=True, max_length=20)
     

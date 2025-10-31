@@ -78,7 +78,16 @@ class Settings(BaseSettings):
         """SUPPORTED_SYMBOLS를 리스트로 반환"""
         symbols_str = os.getenv("SUPPORTED_SYMBOLS", self.SUPPORTED_SYMBOLS_STR)
         return [symbol.strip() for symbol in symbols_str.split(",")]
-
+    # 손절/익절 기본 비율
+    DEFAULT_STOP_LOSS_PERCENT: float = 3.0  # -3% 손절
+    DEFAULT_TAKE_PROFIT_PERCENT: float = 6.0  # +6% 익절 (2:1 비율)
+    
+    # 자동 손절/익절 설정 활성화
+    AUTO_STOP_LOSS_ENABLED: bool = True
+    AUTO_TAKE_PROFIT_ENABLED: bool = True
+    
+    # OCO (One-Cancels-the-Other) 활성화
+    OCO_ENABLED: bool = True
 
 # 설정 인스턴스 생성
 settings = Settings()

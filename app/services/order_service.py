@@ -17,7 +17,11 @@ from decimal import Decimal
 from datetime import datetime
 from fastapi import HTTPException
 import logging
-
+# 기존 import에 추가
+from app.services.auto_stop_loss_take_profit import (
+    auto_create_stop_loss_take_profit,
+    cancel_opposite_order
+)
 logger = logging.getLogger(__name__)
 
 
@@ -402,6 +406,83 @@ async def finalize_order_execution(
         raise
 
 
+# finalize_order_execution 함수 끝부분에 추가
+async def finalize_order_execution(
+    session: Session,
+    order: Order,
+    account: TradingAccount,
+    filled_quantity: Decimal,
+    average_price: Decimal
+):
+    """
+    주문 체결 최종 처리 + 자동 손절/익절 설정
+    """
+    
+    try:
+        # ... 기존 체결 로직 ...
+        
+        # 주문 상태 업데이트
+        order.order_status = OrderStatus.FILLED
+        order.filled_quantity = filled_quantity
+        order.average_price = average_price
+        order.fee = fee
+        order.updated_at = datetime.utcnow()
+        
+        # 거래 내역 기록
+        transaction = Transaction(
+            user_id=account.user_id,
+            order_id=order.id,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=filled_quantity,
+            price=average_price,
+            fee=fee,
+            realized_profit=profit if order.side == OrderSide.SELL else None,
+            timestamp=datetime.utcnow()
+        )
+        
+        account.updated_at = datetime.utcnow()
+        
+        session.add_all([order, account, position, transaction])
+        session.commit()
+        
+        session.refresh(order)
+        session.refresh(account)
+        session.refresh(position)
+        
+        # ⭐ 매수 체결 시 자동 손절/익절 설정
+        if order.side == OrderSide.BUY:
+            from app.core.config import settings
+            
+            # 설정에서 기본 비율 가져오기 (없으면 기본값)
+            stop_loss_percent = getattr(settings, 'DEFAULT_STOP_LOSS_PERCENT', Decimal("3"))
+            take_profit_percent = getattr(settings, 'DEFAULT_TAKE_PROFIT_PERCENT', Decimal("6"))
+            
+            await auto_create_stop_loss_take_profit(
+                session=session,
+                filled_order=order,
+                stop_loss_percent=stop_loss_percent,
+                take_profit_percent=take_profit_percent
+            )
+            
+            logger.info(
+                f"✅ 매수 체결 완료 + 자동 손절/익절 설정: {order.symbol}"
+            )
+        
+        # ⭐ 손절/익절 체결 시 OCO 처리
+        elif order.order_type in [OrderType.STOP_LOSS, OrderType.TAKE_PROFIT]:
+            await cancel_opposite_order(session, order)
+            
+            logger.info(
+                f"✅ {order.order_type.value} 체결 완료 + OCO 처리: {order.symbol}"
+            )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.error(f"❌ 체결 처리 실패: {e}")
+        raise
 def get_user_orders(
     session: Session,
     user_id: str,
