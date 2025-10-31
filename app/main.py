@@ -3,7 +3,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import create_db_and_tables
-from app.routers import auth, orders, account, market
+from app.routers import auth, orders, account, market, futures
 from app.services.binance_service import get_multiple_prices
 from app.cache.cache_manager import cache_manager  # ✅ 직접 import
 import asyncio
@@ -109,6 +109,7 @@ app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(orders.router, prefix=settings.API_V1_STR)
 app.include_router(account.router, prefix=settings.API_V1_STR)
 app.include_router(market.router, prefix=settings.API_V1_STR)
+app.include_router(futures.router, prefix=settings.API_V1_STR)  # 선물 거래
 
 
 # 루트 엔드포인트
