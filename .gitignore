@@ -31,3 +31,6 @@ logs/
 .env.local
 .vscode/
 .idea/
+# 테스트 관련 (추가)
+tests/logs/
+tests/reports/
