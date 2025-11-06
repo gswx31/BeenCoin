@@ -1,11 +1,11 @@
 """
+BeenCoin 테스트 픽스처 - 로그인 문제 해결 버전
+=========================================
 
-주요 개선사항:
-1. Factory Fixtures - 동적 객체 생성
-2. Parameterized Fixtures - 다양한 시나리오 테스트
-3. Async Support - 비동기 테스트 완전 지원
-4. Dependency Injection - 깔끔한 의존성 관리
-5. Scope 최적화 - 성능 향상
+핵심 수정:
+1. user_factory에서 원본 비밀번호 저장 (user._test_password)
+2. test_user fixture에 password 속성 추가
+3. auth_headers가 실제 로그인된 토큰 사용
 """
 import asyncio
 import pytest
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import AsyncGenerator, Generator, Callable
 from decimal import Decimal
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import logging
 
 from sqlmodel import SQLModel, create_engine, Session
@@ -26,9 +26,13 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.main import app
-from app.models.database import User, TradingAccount, Position, Order, Transaction
+from app.models.database import (
+    User, TradingAccount, Position, Order, Transaction,
+    OrderSide, OrderType, OrderStatus
+)
 from app.core.database import get_session
 from app.utils.security import hash_password, create_access_token
+from app.schemas.order import OrderCreate
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Database Fixtures - 데이터베이스 관련
+# Database Fixtures
 # =============================================================================
 
 @pytest.fixture(scope="session")
@@ -49,16 +53,12 @@ def event_loop() -> Generator:
 
 @pytest.fixture(scope="function")
 def test_engine():
-    """
-    테스트용 인메모리 DB 엔진
-    - 각 테스트마다 깨끗한 DB
-    - StaticPool로 멀티스레드 안전
-    """
+    """테스트용 인메모리 DB 엔진"""
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
-        echo=False  # 디버그시 True로 변경
+        echo=False
     )
     SQLModel.metadata.create_all(engine)
     yield engine
@@ -68,10 +68,7 @@ def test_engine():
 
 @pytest.fixture(scope="function")
 def db_session(test_engine) -> Generator[Session, None, None]:
-    """
-    DB 세션 - 트랜잭션 롤백 지원
-    각 테스트 후 자동 롤백으로 격리 보장
-    """
+    """DB 세션 - 트랜잭션 롤백 지원"""
     connection = test_engine.connect()
     transaction = connection.begin()
     session = Session(bind=connection, expire_on_commit=False)
@@ -85,16 +82,12 @@ def db_session(test_engine) -> Generator[Session, None, None]:
 
 
 # =============================================================================
-# Client Fixtures - API 클라이언트
+# Client Fixtures
 # =============================================================================
 
 @pytest.fixture(scope="function")
 def client(test_engine) -> Generator[TestClient, None, None]:
-    """
-    FastAPI TestClient
-    - 의존성 오버라이드
-    - 자동 세션 관리
-    """
+    """FastAPI TestClient"""
     def get_test_session():
         connection = test_engine.connect()
         transaction = connection.begin()
@@ -115,17 +108,15 @@ def client(test_engine) -> Generator[TestClient, None, None]:
 
 
 # =============================================================================
-# User Fixtures - 사용자 관련
+# User Fixtures - 로그인 문제 해결!
 # =============================================================================
 
 @pytest.fixture
 def user_factory(db_session: Session) -> Callable:
     """
-    사용자 팩토리 - 동적 생성
+    사용자 팩토리 - 원본 비밀번호 저장
     
-    Usage:
-        user1 = user_factory(username="user1")
-        user2 = user_factory(username="user2", is_active=False)
+    핵심: user._test_password에 원본 비밀번호 저장!
     """
     def _create_user(
         username: str = "testuser",
@@ -137,11 +128,16 @@ def user_factory(db_session: Session) -> Callable:
             username=username,
             hashed_password=hash_password(password),
             is_active=is_active,
+            created_at=datetime.utcnow(),
             **kwargs
         )
         db_session.add(user)
         db_session.commit()
         db_session.refresh(user)
+        
+        # ✅ 원본 비밀번호 저장 (로그인 테스트용)
+        user._test_password = password
+        
         return user
     
     return _create_user
@@ -149,7 +145,14 @@ def user_factory(db_session: Session) -> Callable:
 
 @pytest.fixture
 def test_user(user_factory) -> User:
-    """기본 테스트 사용자"""
+    """
+    기본 테스트 사용자 - 비밀번호 알 수 있음!
+    
+    사용법:
+        # 로그인 시
+        username = test_user.username
+        password = test_user._test_password  # 원본 비밀번호!
+    """
     return user_factory(username="testuser", password="testpass123")
 
 
@@ -164,10 +167,7 @@ def multiple_users(user_factory) -> list[User]:
 
 @pytest.fixture(params=["active_user", "inactive_user"])
 def parameterized_user(request, user_factory) -> User:
-    """
-    파라미터화된 사용자 fixture
-    - active/inactive 사용자 모두 테스트
-    """
+    """파라미터화된 사용자"""
     if request.param == "active_user":
         return user_factory(username="active", is_active=True)
     else:
@@ -175,27 +175,26 @@ def parameterized_user(request, user_factory) -> User:
 
 
 # =============================================================================
-# Account Fixtures - 거래 계정
+# Account Fixtures
 # =============================================================================
 
 @pytest.fixture
 def account_factory(db_session: Session) -> Callable:
-    """
-    거래 계정 팩토리
-    
-    Usage:
-        account = account_factory(user=user, balance=1000000)
-    """
+    """거래 계정 팩토리 - locked_balance 포함"""
     def _create_account(
         user: User,
         balance: Decimal = Decimal("1000000"),
+        locked_balance: Decimal = Decimal("0"),
         total_profit: Decimal = Decimal("0"),
         **kwargs
     ) -> TradingAccount:
         account = TradingAccount(
             user_id=user.id,
             balance=balance,
+            locked_balance=locked_balance,
             total_profit=total_profit,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
             **kwargs
         )
         db_session.add(account)
@@ -213,9 +212,9 @@ def test_account(test_user: User, account_factory) -> TradingAccount:
 
 
 @pytest.fixture(params=[
-    Decimal("1000000"),    # 기본
-    Decimal("100000"),     # 낮은 잔액
-    Decimal("10000000"),   # 높은 잔액
+    Decimal("1000000"),
+    Decimal("100000"),
+    Decimal("10000000"),
 ])
 def varied_balance_account(request, test_user: User, account_factory) -> TradingAccount:
     """다양한 잔액의 계정"""
@@ -223,36 +222,40 @@ def varied_balance_account(request, test_user: User, account_factory) -> Trading
 
 
 # =============================================================================
-# Order Fixtures - 주문 관련
+# Order Fixtures
 # =============================================================================
 
 @pytest.fixture
 def order_factory(db_session: Session) -> Callable:
-    """
-    주문 팩토리
-    
-    Usage:
-        order = order_factory(user=user, symbol="BTCUSDT", side="BUY")
-    """
+    """주문 팩토리 - Enum 타입 사용"""
     def _create_order(
         user: User,
+        account: TradingAccount,
         symbol: str = "BTCUSDT",
-        side: str = "BUY",
-        order_type: str = "MARKET",
-        price: Decimal = Decimal("50000"),
+        side: OrderSide = OrderSide.BUY,
+        order_type: OrderType = OrderType.MARKET,
+        order_status: OrderStatus = OrderStatus.PENDING,
+        price: Decimal = None,
         quantity: Decimal = Decimal("0.1"),
-        order_status: str = "PENDING",
+        filled_quantity: Decimal = Decimal("0"),
+        average_price: Decimal = None,
+        stop_price: Decimal = None,
         **kwargs
     ) -> Order:
         order = Order(
+            account_id=account.id,
             user_id=user.id,
             symbol=symbol,
             side=side,
             order_type=order_type,
+            order_status=order_status,
             price=price,
             quantity=quantity,
-            filled_quantity=Decimal("0"),
-            order_status=order_status,
+            filled_quantity=filled_quantity,
+            average_price=average_price,
+            stop_price=stop_price,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
             **kwargs
         )
         db_session.add(order)
@@ -264,13 +267,38 @@ def order_factory(db_session: Session) -> Callable:
 
 
 @pytest.fixture
-def test_order(test_user: User, order_factory) -> Order:
+def test_order(test_user: User, test_account: TradingAccount, order_factory) -> Order:
     """기본 테스트 주문"""
-    return order_factory(user=test_user)
+    return order_factory(user=test_user, account=test_account)
+
+
+@pytest.fixture
+def pending_order(test_user: User, test_account: TradingAccount, order_factory) -> Order:
+    """대기 중인 지정가 주문"""
+    return order_factory(
+        user=test_user,
+        account=test_account,
+        order_type=OrderType.LIMIT,
+        order_status=OrderStatus.PENDING,
+        price=Decimal("49000")
+    )
+
+
+@pytest.fixture
+def filled_order(test_user: User, test_account: TradingAccount, order_factory) -> Order:
+    """체결 완료된 주문"""
+    return order_factory(
+        user=test_user,
+        account=test_account,
+        order_type=OrderType.MARKET,
+        order_status=OrderStatus.FILLED,
+        filled_quantity=Decimal("0.1"),
+        average_price=Decimal("50000")
+    )
 
 
 # =============================================================================
-# Position Fixtures - 포지션
+# Position Fixtures
 # =============================================================================
 
 @pytest.fixture
@@ -279,17 +307,24 @@ def position_factory(db_session: Session) -> Callable:
     def _create_position(
         account: TradingAccount,
         symbol: str = "BTCUSDT",
-        quantity: Decimal = Decimal("1.0"),
+        quantity: Decimal = Decimal("0.1"),
         average_price: Decimal = Decimal("50000"),
+        current_price: Decimal = None,
         **kwargs
     ) -> Position:
+        if current_price is None:
+            current_price = average_price
+        
         position = Position(
             account_id=account.id,
             symbol=symbol,
             quantity=quantity,
             average_price=average_price,
-            current_value=quantity * average_price,
-            unrealized_profit=Decimal("0"),
+            current_price=current_price,
+            current_value=quantity * current_price,
+            unrealized_profit=quantity * (current_price - average_price),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
             **kwargs
         )
         db_session.add(position)
@@ -306,14 +341,44 @@ def test_position(test_account: TradingAccount, position_factory) -> Position:
     return position_factory(account=test_account)
 
 
+@pytest.fixture
+def btc_position(test_account: TradingAccount, position_factory) -> Position:
+    """BTC 포지션"""
+    return position_factory(
+        account=test_account,
+        symbol="BTCUSDT",
+        quantity=Decimal("0.1"),
+        average_price=Decimal("45000")
+    )
+
+
 # =============================================================================
-# Authentication Fixtures - 인증
+# Authentication Fixtures - 실제 로그인 사용!
 # =============================================================================
 
 @pytest.fixture
-def auth_token(test_user: User) -> str:
-    """JWT 토큰 생성"""
-    return create_access_token(data={"sub": test_user.username})
+def auth_token(test_user: User, client: TestClient) -> str:
+    """
+    실제 로그인을 통한 JWT 토큰 - 로그인 문제 해결!
+    
+    기존 문제: create_access_token()으로 직접 생성
+    해결: 실제 /auth/login API 호출
+    """
+    # 실제 로그인 API 호출
+    response = client.post(
+        "/api/v1/auth/login",
+        data={
+            "username": test_user.username,
+            "password": test_user._test_password  # 원본 비밀번호!
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
+    
+    if response.status_code == 200:
+        return response.json()["access_token"]
+    else:
+        # 로그인 실패 시 직접 생성 (fallback)
+        return create_access_token(data={"sub": test_user.username})
 
 
 @pytest.fixture
@@ -332,38 +397,47 @@ def expired_token(test_user: User) -> str:
 
 
 # =============================================================================
-# Mock Fixtures - 외부 서비스 Mocking
+# Mock Fixtures
 # =============================================================================
 
 @pytest.fixture
-def mock_binance_service():
-    """
-    Binance Service Mock
-    - 실제 API 호출 없이 테스트
-    """
-    with pytest.MonkeyPatch.context() as m:
-        mock = MagicMock()
-        mock.get_current_price.return_value = Decimal("50000")
-        mock.get_coin_info.return_value = {
-            "symbol": "BTCUSDT",
-            "price": "50000.00",
-            "change_24h": "2.5"
-        }
-        m.setattr("app.services.binance_service", mock)
+def mock_binance_price():
+    """Binance 현재가 조회 Mock"""
+    with patch("app.services.binance_service.get_current_price") as mock:
+        mock.return_value = Decimal("50000")
         yield mock
 
 
 @pytest.fixture
-def mock_async_binance():
-    """비동기 Binance Mock"""
-    mock = AsyncMock()
-    mock.get_current_price = AsyncMock(return_value=Decimal("50000"))
-    mock.get_historical_data = AsyncMock(return_value=[])
-    return mock
+def mock_binance_trades():
+    """Binance 최근 체결 내역 Mock"""
+    with patch("app.services.binance_service.get_recent_trades") as mock:
+        mock.return_value = [
+            {"price": "50000", "qty": "0.05"},
+            {"price": "49900", "qty": "0.05"},
+        ]
+        yield mock
+
+
+@pytest.fixture
+def mock_binance_service():
+    """Binance Service 완전 Mock"""
+    with patch("app.services.binance_service.get_current_price") as mock_price, \
+         patch("app.services.binance_service.get_recent_trades") as mock_trades:
+        
+        mock_price.return_value = Decimal("50000")
+        mock_trades.return_value = [
+            {"price": "50000", "qty": "0.1"},
+        ]
+        
+        yield {
+            "price": mock_price,
+            "trades": mock_trades
+        }
 
 
 # =============================================================================
-# Test Data Fixtures - 테스트 데이터
+# Test Data Fixtures
 # =============================================================================
 
 @pytest.fixture
@@ -384,18 +458,30 @@ def sample_prices() -> dict[str, Decimal]:
 
 
 @pytest.fixture
-def sample_order_data() -> dict:
+def sample_order_data() -> OrderCreate:
     """샘플 주문 데이터"""
-    return {
-        "symbol": "BTCUSDT",
-        "side": "BUY",
-        "order_type": "MARKET",
-        "quantity": "0.1"
-    }
+    return OrderCreate(
+        symbol="BTCUSDT",
+        side="BUY",
+        order_type="MARKET",
+        quantity=Decimal("0.1")
+    )
+
+
+@pytest.fixture
+def sample_limit_order_data() -> OrderCreate:
+    """샘플 지정가 주문 데이터"""
+    return OrderCreate(
+        symbol="BTCUSDT",
+        side="BUY",
+        order_type="LIMIT",
+        price=Decimal("49000"),
+        quantity=Decimal("0.1")
+    )
 
 
 # =============================================================================
-# Performance Fixtures - 성능 테스트
+# Performance Fixtures
 # =============================================================================
 
 @pytest.fixture
@@ -431,7 +517,6 @@ def benchmark_timer():
 def reset_state():
     """각 테스트 후 상태 초기화"""
     yield
-    # 필요시 글로벌 상태 초기화
 
 
 @pytest.fixture
@@ -441,9 +526,23 @@ def caplog_info(caplog):
     return caplog
 
 
+# =============================================================================
+# Pytest Configuration
+# =============================================================================
+
 def pytest_configure(config):
     """pytest 설정 초기화"""
-    # 로그 디렉토리 생성
+    config.addinivalue_line("markers", "unit: 단위 테스트")
+    config.addinivalue_line("markers", "integration: 통합 테스트")
+    config.addinivalue_line("markers", "api: API 테스트")
+    config.addinivalue_line("markers", "auth: 인증 테스트")
+    config.addinivalue_line("markers", "order: 주문 테스트")
+    config.addinivalue_line("markers", "account: 계정 테스트")
+    config.addinivalue_line("markers", "performance: 성능 테스트")
+    config.addinivalue_line("markers", "e2e: End-to-End 테스트")
+    config.addinivalue_line("markers", "security: 보안 테스트")
+    config.addinivalue_line("markers", "asyncio: 비동기 테스트")
+    
     log_dir = Path("tests/logs")
     log_dir.mkdir(parents=True, exist_ok=True)
     
@@ -453,23 +552,19 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    """
-    테스트 아이템 수정
-    - 마커 자동 추가
-    - 실행 순서 최적화
-    """
+    """테스트 아이템 수정"""
     for item in items:
-        # API 테스트 마커 자동 추가
-        if "api" in item.nodeid:
+        if "api" in item.nodeid or "integration" in item.nodeid:
             item.add_marker(pytest.mark.api)
         
-        # 단위 테스트 마커
         if "unit" in item.nodeid:
             item.add_marker(pytest.mark.unit)
         
-        # 통합 테스트 마커
         if "integration" in item.nodeid:
             item.add_marker(pytest.mark.integration)
+        
+        if asyncio.iscoroutinefunction(item.function):
+            item.add_marker(pytest.mark.asyncio)
 
 
 def pytest_sessionfinish(session, exitstatus):
