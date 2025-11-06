@@ -1,3 +1,4 @@
+# app/utils/security.py
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
@@ -13,15 +14,6 @@ from app.models.database import User
 # schemes: argon2 우선, bcrypt fallback (기존 사용자 호환)
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 
-# Argon2 파라미터 조정 (옵션: 보안 강화, 필요 시 조정)
-# pwd_context = CryptContext(
-#     schemes=["argon2", "bcrypt"],
-#     deprecated="auto",
-#     argon2__memory_cost=102400,  # 100 MB
-#     argon2__time_cost=2,
-#     argon2__parallelism=8
-# )
-
 # HTTP Bearer 토큰 스킴
 security = HTTPBearer()
 
@@ -31,6 +23,14 @@ def hash_password(password: str) -> str:
     Argon2 사용: 입력 길이 제한 없음 (보안상 validator에서 char 제한 추천)
     """
     return pwd_context.hash(password)
+
+# ⭐ 별칭 함수 추가 (하위 호환성)
+def get_password_hash(password: str) -> str:
+    """
+    비밀번호 해싱 (hash_password의 별칭)
+    하위 호환성을 위해 추가
+    """
+    return hash_password(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """비밀번호 검증"""

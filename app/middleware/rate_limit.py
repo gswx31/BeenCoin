@@ -115,6 +115,37 @@ class APIKeyRateLimiter:
         """남은 요청 수"""
         max_requests, _ = self.limits.get(tier, self.limits["free"])
         return max_requests - len(self.requests[api_key])
+    
+    async def cleanup_old_entries(self):
+        """
+        주기적으로 오래된 요청 기록 정리
+        메모리 누수 방지
+        """
+        import asyncio
+        
+        while True:
+            try:
+                await asyncio.sleep(300)  # 5분마다 실행
+                now = datetime.now()
+                
+                # 모든 API Key에 대해 오래된 요청 제거
+                for api_key in list(self.requests.keys()):
+                    # 가장 긴 window (enterprise: 60초)
+                    window = timedelta(seconds=60)
+                    self.requests[api_key] = [
+                        req_time for req_time in self.requests[api_key]
+                        if now - req_time < window
+                    ]
+                    
+                    # 빈 리스트면 삭제
+                    if not self.requests[api_key]:
+                        del self.requests[api_key]
+                
+                logger.debug(f"🧹 Rate limiter cleanup: {len(self.requests)} active keys")
+            
+            except Exception as e:
+                logger.error(f"❌ Rate limiter cleanup error: {e}")
+                await asyncio.sleep(60)  # 에러 시 1분 후 재시도
 
 
 # 싱글톤 인스턴스

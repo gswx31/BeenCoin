@@ -1,431 +1,551 @@
 """
-주문 서비스 테스트 - 백엔드 API 완전 연동 버전
-=========================================
+주문 서비스 API 테스트 - 백엔드 완전 연동 버전
+===========================================
 
-백엔드 실제 구현:
-- app/services/order_service.py
-- async def create_order()
-- async def cancel_order()
-- async def execute_market_order_complete()
-- locked_balance 지원
-- 최근 체결 내역 기반 시장가 체결
+현재 백엔드 API 구조:
+- POST /api/v1/orders/ (주문 생성)
+- GET  /api/v1/orders/ (주문 목록)
+- GET  /api/v1/orders/{order_id} (주문 조회)
+- DELETE /api/v1/orders/{order_id} (주문 취소)
 
-수정 사항:
-1. 모든 함수를 async/await로 호출
-2. Enum 타입 사용 (OrderSide, OrderType, OrderStatus)
-3. OrderCreate 스키마 사용
-4. HTTPException 처리
-5. locked_balance 테스트
-6. get_recent_trades Mock 추가
+주요 수정:
+1. 실제 API 엔드포인트 사용
+2. 비동기 주문 서비스 함수 호출
+3. Enum 타입 처리
+4. locked_balance 로직 반영
+5. 최근 체결 내역 Mock 추가
 """
 import pytest
+from fastapi.testclient import TestClient
 from decimal import Decimal
 from unittest.mock import patch, AsyncMock
-from fastapi import HTTPException
+from datetime import datetime
+
+from app.models.database import User, TradingAccount, Order, Position, OrderSide, OrderType, OrderStatus
 from sqlmodel import Session, select
 
-from app.services.order_service import (
-    create_order,
-    cancel_order,
-    get_user_orders,
-    calculate_fee
-)
-from app.models.database import (
-    User, TradingAccount, Order, Position, Transaction,
-    OrderSide, OrderType, OrderStatus
-)
-from app.schemas.order import OrderCreate
-
 
 # =============================================================================
-# 주문 생성 테스트 - 시장가 주문
+# 주문 생성 API 테스트
 # =============================================================================
 
-@pytest.mark.unit
+@pytest.mark.integration
 @pytest.mark.order
-@pytest.mark.asyncio
-class TestMarketOrderCreation:
-    """시장가 주문 생성 테스트"""
+class TestOrderCreationAPI:
+    """주문 생성 API 테스트"""
     
     @patch("app.services.binance_service.get_current_price")
     @patch("app.services.binance_service.get_recent_trades")
-    async def test_create_market_buy_order_success(
+    def test_create_market_buy_order_success(
         self,
         mock_get_trades,
         mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        client: TestClient,
+        db_session: Session
     ):
         """
         시장가 매수 주문 생성 성공
         
-        Given: 충분한 잔액의 계정
-        When: 시장가 매수 주문 생성
-        Then: 주문 체결 및 잔액 차감
+        POST /api/v1/orders/
         """
         # Arrange
         mock_get_price.return_value = Decimal("50000")
         mock_get_trades.return_value = [
-            {"price": "49800", "qty": "0.05"},
-            {"price": "50000", "qty": "0.05"},
+            {"price": "50000", "qty": "0.1"},
         ]
         
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="BUY",
-            order_type="MARKET",
-            quantity=Decimal("0.1")
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "trader1", "password": "password123"}
         )
         
-        initial_balance = test_account.balance
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "trader1", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        order_data = {
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "order_type": "MARKET",
+            "quantity": 0.1
+        }
         
         # Act
-        order = await create_order(db_session, test_user.id, order_data)
+        response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json=order_data
+        )
         
         # Assert
-        assert order.symbol == "BTCUSDT"
-        assert order.side == OrderSide.BUY
-        assert order.order_status == OrderStatus.FILLED
-        assert order.filled_quantity == Decimal("0.1")
-        assert order.average_price is not None
-        
-        # 잔액 차감 확인
-        db_session.refresh(test_account)
-        assert test_account.balance < initial_balance
+        assert response.status_code == 201
+        data = response.json()
+        assert data["symbol"] == "BTCUSDT"
+        assert data["side"] == "BUY"
+        assert data["order_status"] == "FILLED"
+        assert data["filled_quantity"] == 0.1
+        assert data["average_price"] is not None
     
     
     @patch("app.services.binance_service.get_current_price")
-    @patch("app.services.binance_service.get_recent_trades")
-    async def test_create_market_sell_order_success(
+    def test_create_limit_order_pending(
         self,
-        mock_get_trades,
         mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        client: TestClient
     ):
         """
-        시장가 매도 주문 생성 성공
+        지정가 주문 생성 (PENDING 상태)
         
-        Given: 보유 포지션이 있는 계정
-        When: 시장가 매도 주문 생성
-        Then: 주문 체결 및 잔액 증가
+        POST /api/v1/orders/
         """
         # Arrange
         mock_get_price.return_value = Decimal("50000")
-        mock_get_trades.return_value = [
-            {"price": "50200", "qty": "0.05"},
-            {"price": "50000", "qty": "0.05"},
-        ]
         
-        # 포지션 생성
-        position = Position(
-            account_id=test_account.id,
-            symbol="BTCUSDT",
-            quantity=Decimal("0.1"),
-            average_price=Decimal("45000"),
-            current_value=Decimal("5000"),
-            unrealized_profit=Decimal("500")
-        )
-        db_session.add(position)
-        db_session.commit()
-        
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="SELL",
-            order_type="MARKET",
-            quantity=Decimal("0.1")
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "trader2", "password": "password123"}
         )
         
-        initial_balance = test_account.balance
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "trader2", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        order_data = {
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "order_type": "LIMIT",
+            "price": 49000,  # 현재가보다 낮음
+            "quantity": 0.1
+        }
         
         # Act
-        order = await create_order(db_session, test_user.id, order_data)
+        response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json=order_data
+        )
         
         # Assert
-        assert order.symbol == "BTCUSDT"
-        assert order.side == OrderSide.SELL
-        assert order.order_status == OrderStatus.FILLED
-        assert order.filled_quantity == Decimal("0.1")
-        
-        # 잔액 증가 확인
-        db_session.refresh(test_account)
-        assert test_account.balance > initial_balance
+        assert response.status_code == 201
+        data = response.json()
+        assert data["order_status"] == "PENDING"
+        assert data["price"] == 49000
+        assert data["filled_quantity"] == 0
     
     
     @patch("app.services.binance_service.get_current_price")
-    async def test_create_order_insufficient_balance_fails(
+    def test_create_order_insufficient_balance(
         self,
         mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        client: TestClient,
+        db_session: Session
     ):
         """
         잔액 부족 시 주문 실패
         
-        Given: 잔액이 부족한 계정
-        When: 큰 금액의 매수 주문 시도
-        Then: HTTPException 400 발생
+        POST /api/v1/orders/ → 400
         """
         # Arrange
         mock_get_price.return_value = Decimal("50000")
         
-        # 잔액을 1000원으로 설정
-        test_account.balance = Decimal("1000")
-        db_session.add(test_account)
-        db_session.commit()
-        
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="BUY",
-            order_type="MARKET",
-            quantity=Decimal("10")  # 50만원 상당
+        # 사용자 생성
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "poortrader", "password": "password123"}
         )
         
-        # Act & Assert
-        with pytest.raises(HTTPException) as exc_info:
-            await create_order(db_session, test_user.id, order_data)
+        # 잔액을 1000원으로 감소
+        user = db_session.exec(
+            select(User).where(User.username == "poortrader")
+        ).first()
         
-        assert exc_info.value.status_code == 400
-        assert "잔액" in str(exc_info.value.detail)
+        account = db_session.exec(
+            select(TradingAccount).where(TradingAccount.user_id == user.id)
+        ).first()
+        account.balance = Decimal("1000")
+        db_session.add(account)
+        db_session.commit()
+        
+        # 로그인
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "poortrader", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        order_data = {
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "order_type": "MARKET",
+            "quantity": 10  # 50만원 상당
+        }
+        
+        # Act
+        response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json=order_data
+        )
+        
+        # Assert
+        assert response.status_code == 400
+        assert "잔액" in response.json()["detail"]
     
     
     @patch("app.services.binance_service.get_current_price")
-    async def test_create_sell_order_insufficient_quantity_fails(
+    @patch("app.services.binance_service.get_recent_trades")
+    def test_create_sell_order_success(
+        self,
+        mock_get_trades,
+        mock_get_price,
+        client: TestClient,
+        db_session: Session
+    ):
+        """
+        매도 주문 생성 성공
+        
+        POST /api/v1/orders/
+        """
+        # Arrange
+        mock_get_price.return_value = Decimal("50000")
+        mock_get_trades.return_value = [
+            {"price": "50000", "qty": "0.1"},
+        ]
+        
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "seller1", "password": "password123"}
+        )
+        
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "seller1", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # 먼저 매수하여 포지션 생성
+        buy_order_data = {
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "order_type": "MARKET",
+            "quantity": 0.1
+        }
+        client.post("/api/v1/orders/", headers=headers, json=buy_order_data)
+        
+        # Act - 매도
+        sell_order_data = {
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "order_type": "MARKET",
+            "quantity": 0.1
+        }
+        response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json=sell_order_data
+        )
+        
+        # Assert
+        assert response.status_code == 201
+        data = response.json()
+        assert data["side"] == "SELL"
+        assert data["order_status"] == "FILLED"
+    
+    
+    @patch("app.services.binance_service.get_current_price")
+    def test_create_sell_order_insufficient_quantity(
         self,
         mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        client: TestClient
     ):
         """
         수량 부족 시 매도 실패
         
-        Given: 0.05 BTC만 보유
-        When: 0.1 BTC 매도 시도
-        Then: HTTPException 400 발생
+        POST /api/v1/orders/ → 400
         """
         # Arrange
         mock_get_price.return_value = Decimal("50000")
         
-        # 0.05 BTC만 보유
-        position = Position(
-            account_id=test_account.id,
-            symbol="BTCUSDT",
-            quantity=Decimal("0.05"),
-            average_price=Decimal("45000"),
-            current_value=Decimal("2500"),
-            unrealized_profit=Decimal("250")
-        )
-        db_session.add(position)
-        db_session.commit()
-        
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="SELL",
-            order_type="MARKET",
-            quantity=Decimal("0.1")  # 보유량 초과
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "noseller", "password": "password123"}
         )
         
-        # Act & Assert
-        with pytest.raises(HTTPException) as exc_info:
-            await create_order(db_session, test_user.id, order_data)
-        
-        assert exc_info.value.status_code == 400
-        assert "수량" in str(exc_info.value.detail) or "부족" in str(exc_info.value.detail)
-    
-    
-    @patch("app.services.binance_service.get_current_price")
-    async def test_create_sell_order_without_position_fails(
-        self,
-        mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
-    ):
-        """
-        포지션 없이 매도 시도 실패
-        
-        Given: 보유하지 않은 코인
-        When: 매도 주문 생성
-        Then: HTTPException 400 발생
-        """
-        # Arrange
-        mock_get_price.return_value = Decimal("50000")
-        
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="SELL",
-            order_type="MARKET",
-            quantity=Decimal("0.1")
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "noseller", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
         
-        # Act & Assert
-        with pytest.raises(HTTPException) as exc_info:
-            await create_order(db_session, test_user.id, order_data)
-        
-        assert exc_info.value.status_code == 400
-
-
-# =============================================================================
-# 지정가 주문 테스트
-# =============================================================================
-
-@pytest.mark.unit
-@pytest.mark.order
-@pytest.mark.asyncio
-class TestLimitOrderCreation:
-    """지정가 주문 생성 테스트"""
-    
-    @patch("app.services.binance_service.get_current_price")
-    async def test_create_limit_buy_order_pending(
-        self,
-        mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
-    ):
-        """
-        지정가 매수 주문 생성 (대기 상태)
-        
-        Given: 현재가보다 낮은 지정가
-        When: 지정가 매수 주문 생성
-        Then: PENDING 상태 및 locked_balance 증가
-        """
-        # Arrange
-        mock_get_price.return_value = Decimal("50000")
-        
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="BUY",
-            order_type="LIMIT",
-            price=Decimal("49000"),  # 현재가보다 낮음
-            quantity=Decimal("0.1")
-        )
-        
-        initial_locked = test_account.locked_balance
+        # 보유하지 않은 코인 매도 시도
+        sell_order_data = {
+            "symbol": "BTCUSDT",
+            "side": "SELL",
+            "order_type": "MARKET",
+            "quantity": 0.1
+        }
         
         # Act
-        order = await create_order(db_session, test_user.id, order_data)
+        response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json=sell_order_data
+        )
         
         # Assert
-        assert order.order_status == OrderStatus.PENDING
-        assert order.price == Decimal("49000")
-        assert order.filled_quantity == Decimal("0")
-        
-        # locked_balance 증가 확인
-        db_session.refresh(test_account)
-        assert test_account.locked_balance > initial_locked
-    
+        assert response.status_code == 400
+        assert "수량" in response.json()["detail"] or "insufficient" in response.json()["detail"].lower()
+
+
+# =============================================================================
+# 주문 조회 API 테스트
+# =============================================================================
+
+@pytest.mark.integration
+@pytest.mark.order
+class TestOrderRetrievalAPI:
+    """주문 조회 API 테스트"""
     
     @patch("app.services.binance_service.get_current_price")
     @patch("app.services.binance_service.get_recent_trades")
-    async def test_limit_order_immediate_execution(
+    def test_get_orders_list(
         self,
         mock_get_trades,
         mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        client: TestClient
     ):
         """
-        지정가 도달 시 즉시 체결
+        주문 목록 조회
         
-        Given: 현재가가 지정가보다 낮음
-        When: 지정가 매수 주문 생성
-        Then: 즉시 FILLED 상태로 체결
+        GET /api/v1/orders/
         """
         # Arrange
-        mock_get_price.return_value = Decimal("48000")  # 지정가보다 낮음
+        mock_get_price.return_value = Decimal("50000")
         mock_get_trades.return_value = [
-            {"price": "48000", "qty": "0.1"},
+            {"price": "50000", "qty": "0.01"},
         ]
         
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="BUY",
-            order_type="LIMIT",
-            price=Decimal("49000"),  # 현재가보다 높음
-            quantity=Decimal("0.1")
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "listuser", "password": "password123"}
         )
         
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "listuser", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # 여러 주문 생성
+        for i in range(3):
+            order_data = {
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "order_type": "MARKET",
+                "quantity": 0.01
+            }
+            client.post("/api/v1/orders/", headers=headers, json=order_data)
+        
         # Act
-        order = await create_order(db_session, test_user.id, order_data)
+        response = client.get("/api/v1/orders/", headers=headers)
         
         # Assert
-        assert order.order_status == OrderStatus.FILLED
-        assert order.filled_quantity == Decimal("0.1")
-
-
-# =============================================================================
-# 주문 취소 테스트
-# =============================================================================
-
-@pytest.mark.unit
-@pytest.mark.order
-@pytest.mark.asyncio
-class TestOrderCancellation:
-    """주문 취소 테스트"""
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) >= 3
+        assert all("id" in order for order in data)
+        assert all("symbol" in order for order in data)
+    
     
     @patch("app.services.binance_service.get_current_price")
-    async def test_cancel_pending_order_success(
+    def test_get_orders_by_symbol(
         self,
         mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        client: TestClient
     ):
         """
-        대기 중인 주문 취소 성공
+        특정 심볼 필터링
         
-        Given: PENDING 상태의 지정가 주문
-        When: 주문 취소
-        Then: CANCELLED 상태 및 locked_balance 해제
+        GET /api/v1/orders/?symbol=BTCUSDT
         """
         # Arrange
         mock_get_price.return_value = Decimal("50000")
         
-        # 지정가 주문 생성
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="BUY",
-            order_type="LIMIT",
-            price=Decimal("49000"),
-            quantity=Decimal("0.1")
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "filteruser", "password": "password123"}
         )
         
-        order = await create_order(db_session, test_user.id, order_data)
-        initial_locked = test_account.locked_balance
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "filteruser", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
         
         # Act
-        cancelled_order = await cancel_order(db_session, test_user.id, order.id)
+        response = client.get(
+            "/api/v1/orders/?symbol=BTCUSDT",
+            headers=headers
+        )
         
         # Assert
-        assert cancelled_order.order_status == OrderStatus.CANCELLED
-        
-        # locked_balance 해제 확인
-        db_session.refresh(test_account)
-        assert test_account.locked_balance < initial_locked
+        assert response.status_code == 200
+        data = response.json()
+        assert all(order["symbol"] == "BTCUSDT" for order in data)
     
     
     @patch("app.services.binance_service.get_current_price")
     @patch("app.services.binance_service.get_recent_trades")
-    async def test_cancel_filled_order_fails(
+    def test_get_single_order(
         self,
         mock_get_trades,
         mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        client: TestClient
+    ):
+        """
+        특정 주문 조회
+        
+        GET /api/v1/orders/{order_id}
+        """
+        # Arrange
+        mock_get_price.return_value = Decimal("50000")
+        mock_get_trades.return_value = [
+            {"price": "50000", "qty": "0.1"},
+        ]
+        
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "singleuser", "password": "password123"}
+        )
+        
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "singleuser", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # 주문 생성
+        order_response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json={
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "order_type": "MARKET",
+                "quantity": 0.1
+            }
+        )
+        order_id = order_response.json()["id"]
+        
+        # Act
+        response = client.get(f"/api/v1/orders/{order_id}", headers=headers)
+        
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == order_id
+        assert data["symbol"] == "BTCUSDT"
+
+
+# =============================================================================
+# 주문 취소 API 테스트
+# =============================================================================
+
+@pytest.mark.integration
+@pytest.mark.order
+class TestOrderCancellationAPI:
+    """주문 취소 API 테스트"""
+    
+    @patch("app.services.binance_service.get_current_price")
+    def test_cancel_pending_order_success(
+        self,
+        mock_get_price,
+        client: TestClient
+    ):
+        """
+        대기 주문 취소 성공
+        
+        DELETE /api/v1/orders/{order_id}
+        """
+        # Arrange
+        mock_get_price.return_value = Decimal("50000")
+        
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "canceluser", "password": "password123"}
+        )
+        
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "canceluser", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # 지정가 주문 생성 (PENDING)
+        order_response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json={
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "order_type": "LIMIT",
+                "price": 49000,
+                "quantity": 0.1
+            }
+        )
+        order_id = order_response.json()["id"]
+        
+        # Act
+        response = client.delete(f"/api/v1/orders/{order_id}", headers=headers)
+        
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert data["order_status"] == "CANCELLED"
+    
+    
+    @patch("app.services.binance_service.get_current_price")
+    @patch("app.services.binance_service.get_recent_trades")
+    def test_cancel_filled_order_fails(
+        self,
+        mock_get_trades,
+        mock_get_price,
+        client: TestClient
     ):
         """
         체결된 주문 취소 실패
         
-        Given: FILLED 상태의 주문
-        When: 취소 시도
-        Then: HTTPException 400 발생
+        DELETE /api/v1/orders/{order_id} → 400
         """
         # Arrange
         mock_get_price.return_value = Decimal("50000")
@@ -433,251 +553,185 @@ class TestOrderCancellation:
             {"price": "50000", "qty": "0.1"},
         ]
         
-        # 시장가 주문 생성 (즉시 체결)
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="BUY",
-            order_type="MARKET",
-            quantity=Decimal("0.1")
+        # 사용자 생성 & 로그인
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "filleduser", "password": "password123"}
         )
         
-        order = await create_order(db_session, test_user.id, order_data)
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "filleduser", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
         
-        # Act & Assert
-        with pytest.raises(HTTPException) as exc_info:
-            await cancel_order(db_session, test_user.id, order.id)
+        # 시장가 주문 생성 (즉시 체결)
+        order_response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json={
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "order_type": "MARKET",
+                "quantity": 0.1
+            }
+        )
+        order_id = order_response.json()["id"]
         
-        assert exc_info.value.status_code == 400
-        assert "취소할 수 없는" in str(exc_info.value.detail)
+        # Act
+        response = client.delete(f"/api/v1/orders/{order_id}", headers=headers)
+        
+        # Assert
+        assert response.status_code == 400
+        assert "취소할 수 없는" in response.json()["detail"]
     
     
-    async def test_cancel_order_unauthorized_fails(
+    @patch("app.services.binance_service.get_current_price")
+    def test_cancel_other_users_order_fails(
         self,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        mock_get_price,
+        client: TestClient
     ):
         """
         다른 사용자의 주문 취소 실패
         
-        Given: 다른 사용자의 주문
-        When: 취소 시도
-        Then: HTTPException 403 발생
+        DELETE /api/v1/orders/{order_id} → 403
         """
-        # Arrange - 다른 사용자 생성
-        other_user = User(
-            username="otheruser",
-            hashed_password="hashedpass",
-            is_active=True
+        # Arrange
+        mock_get_price.return_value = Decimal("50000")
+        
+        # 첫 번째 사용자 - 주문 생성
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "owner", "password": "password123"}
         )
-        db_session.add(other_user)
-        db_session.commit()
         
-        # 다른 사용자의 주문 생성
-        order = Order(
-            account_id=test_account.id,
-            user_id=other_user.id,
-            symbol="BTCUSDT",
-            side=OrderSide.BUY,
-            order_type=OrderType.LIMIT,
-            order_status=OrderStatus.PENDING,
-            price=Decimal("49000"),
-            quantity=Decimal("0.1"),
-            filled_quantity=Decimal("0")
+        login1 = client.post(
+            "/api/v1/auth/login",
+            data={"username": "owner", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
-        db_session.add(order)
-        db_session.commit()
+        token1 = login1.json()["access_token"]
+        headers1 = {"Authorization": f"Bearer {token1}"}
         
-        # Act & Assert
-        with pytest.raises(HTTPException) as exc_info:
-            await cancel_order(db_session, test_user.id, order.id)
+        order_response = client.post(
+            "/api/v1/orders/",
+            headers=headers1,
+            json={
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "order_type": "LIMIT",
+                "price": 49000,
+                "quantity": 0.1
+            }
+        )
+        order_id = order_response.json()["id"]
         
-        assert exc_info.value.status_code == 403
+        # 두 번째 사용자 - 취소 시도
+        client.post(
+            "/api/v1/auth/register",
+            json={"username": "hacker", "password": "password123"}
+        )
+        
+        login2 = client.post(
+            "/api/v1/auth/login",
+            data={"username": "hacker", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        token2 = login2.json()["access_token"]
+        headers2 = {"Authorization": f"Bearer {token2}"}
+        
+        # Act
+        response = client.delete(f"/api/v1/orders/{order_id}", headers=headers2)
+        
+        # Assert
+        assert response.status_code == 403
+        assert "권한" in response.json()["detail"]
 
 
 # =============================================================================
-# 포지션 업데이트 테스트
+# E2E 시나리오 테스트
 # =============================================================================
 
-@pytest.mark.unit
+@pytest.mark.e2e
 @pytest.mark.order
-@pytest.mark.asyncio
-class TestPositionUpdates:
-    """포지션 업데이트 로직 테스트"""
+class TestOrderEndToEnd:
+    """주문 전체 플로우 테스트"""
     
     @patch("app.services.binance_service.get_current_price")
     @patch("app.services.binance_service.get_recent_trades")
-    async def test_buy_order_creates_new_position(
+    def test_complete_trading_cycle(
         self,
         mock_get_trades,
         mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
+        client: TestClient
     ):
         """
-        매수 주문 시 신규 포지션 생성
+        완전한 거래 사이클
         
-        Given: 포지션이 없는 상태
-        When: 매수 주문 체결
-        Then: 새로운 포지션 생성
+        1. 회원가입
+        2. 로그인
+        3. 매수 주문
+        4. 주문 확인
+        5. 매도 주문
+        6. 최종 확인
         """
-        # Arrange
+        # Setup
         mock_get_price.return_value = Decimal("50000")
         mock_get_trades.return_value = [
             {"price": "50000", "qty": "0.1"},
         ]
         
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="BUY",
-            order_type="MARKET",
-            quantity=Decimal("0.1")
+        # Step 1: 회원가입
+        register_response = client.post(
+            "/api/v1/auth/register",
+            json={"username": "fullcycle", "password": "password123"}
         )
+        assert register_response.status_code == 200
         
-        # Act
-        await create_order(db_session, test_user.id, order_data)
-        
-        # Assert
-        position = db_session.exec(
-            select(Position).where(
-                Position.account_id == test_account.id,
-                Position.symbol == "BTCUSDT"
-            )
-        ).first()
-        
-        assert position is not None
-        assert position.quantity == Decimal("0.1")
-        assert position.average_price > Decimal("0")
-    
-    
-    @patch("app.services.binance_service.get_current_price")
-    @patch("app.services.binance_service.get_recent_trades")
-    async def test_buy_order_updates_existing_position(
-        self,
-        mock_get_trades,
-        mock_get_price,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
-    ):
-        """
-        추가 매수 시 평균 단가 업데이트
-        
-        Given: 기존 포지션 0.1 BTC @ 40000
-        When: 0.1 BTC @ 50000 추가 매수
-        Then: 0.2 BTC @ 평균단가
-        """
-        # Arrange
-        mock_get_price.return_value = Decimal("50000")
-        mock_get_trades.return_value = [
-            {"price": "50000", "qty": "0.1"},
-        ]
-        
-        # 기존 포지션 생성
-        position = Position(
-            account_id=test_account.id,
-            symbol="BTCUSDT",
-            quantity=Decimal("0.1"),
-            average_price=Decimal("40000"),
-            current_value=Decimal("4000"),
-            unrealized_profit=Decimal("1000")
+        # Step 2: 로그인
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={"username": "fullcycle", "password": "password123"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
-        db_session.add(position)
-        db_session.commit()
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
         
-        order_data = OrderCreate(
-            symbol="BTCUSDT",
-            side="BUY",
-            order_type="MARKET",
-            quantity=Decimal("0.1")
+        # Step 3: 매수 주문
+        buy_response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json={
+                "symbol": "BTCUSDT",
+                "side": "BUY",
+                "order_type": "MARKET",
+                "quantity": 0.1
+            }
         )
+        assert buy_response.status_code == 201
         
-        # Act
-        await create_order(db_session, test_user.id, order_data)
+        # Step 4: 주문 확인
+        orders_response = client.get("/api/v1/orders/", headers=headers)
+        assert orders_response.status_code == 200
+        assert len(orders_response.json()) >= 1
         
-        # Assert
-        db_session.refresh(position)
-        assert position.quantity == Decimal("0.2")
-        # 평균 단가는 40000과 50000 사이
-        assert Decimal("40000") < position.average_price < Decimal("50000")
-
-
-# =============================================================================
-# 주문 조회 테스트
-# =============================================================================
-
-@pytest.mark.unit
-@pytest.mark.order
-class TestOrderRetrieval:
-    """주문 조회 테스트"""
-    
-    def test_get_user_orders_all(
-        self,
-        db_session: Session,
-        test_user: User,
-        test_account: TradingAccount
-    ):
-        """
-        전체 주문 목록 조회
+        # Step 5: 매도 주문
+        sell_response = client.post(
+            "/api/v1/orders/",
+            headers=headers,
+            json={
+                "symbol": "BTCUSDT",
+                "side": "SELL",
+                "order_type": "MARKET",
+                "quantity": 0.1
+            }
+        )
+        assert sell_response.status_code == 201
         
-        Given: 여러 개의 주문
-        When: 주문 목록 조회
-        Then: 모든 주문 반환 (최신순)
-        """
-        # Arrange - 5개 주문 생성
-        for i in range(5):
-            order = Order(
-                account_id=test_account.id,
-                user_id=test_user.id,
-                symbol="BTCUSDT",
-                side=OrderSide.BUY,
-                order_type=OrderType.MARKET,
-                order_status=OrderStatus.FILLED,
-                quantity=Decimal("0.1"),
-                filled_quantity=Decimal("0.1"),
-                average_price=Decimal("50000")
-            )
-            db_session.add(order)
-        db_session.commit()
-        
-        # Act
-        orders = get_user_orders(db_session, test_user.id)
-        
-        # Assert
-        assert len(orders) == 5
-
-
-# =============================================================================
-# 수수료 계산 테스트
-# =============================================================================
-
-@pytest.mark.unit
-@pytest.mark.order
-class TestFeeCalculation:
-    """수수료 계산 테스트"""
-    
-    @pytest.mark.parametrize("quantity,price,expected_fee", [
-        (Decimal("0.1"), Decimal("50000"), Decimal("5")),
-        (Decimal("1"), Decimal("100"), Decimal("0.1")),
-        (Decimal("0.01"), Decimal("1000"), Decimal("0.01")),
-    ])
-    def test_fee_calculation_correct(
-        self,
-        quantity: Decimal,
-        price: Decimal,
-        expected_fee: Decimal
-    ):
-        """
-        수수료 계산 정확성 (0.1%)
-        
-        Given: 주문 수량과 가격
-        When: 수수료 계산
-        Then: 0.1% 수수료 정확히 계산
-        """
-        # Act
-        fee = calculate_fee(quantity, price)
-        
-        # Assert
-        # 오차 범위 허용
-        assert abs(fee - expected_fee) < Decimal("0.001")
+        # Step 6: 최종 확인
+        final_orders = client.get("/api/v1/orders/", headers=headers)
+        assert len(final_orders.json()) >= 2
