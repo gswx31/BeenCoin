@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from app.middleware.rate_limit import RateLimitMiddleware, rate_limiter
 from app.middleware.cache_middleware import HTTPCacheMiddleware
 from app.cache.redis_cache import redis_cache
+from fastapi.responses import JSONResponse
+
 
 # 로깅 설정
 logging.basicConfig(
@@ -231,22 +233,29 @@ async def websocket_realtime(websocket: WebSocket):
         logger.error(f"❌ WebSocket error: {e}")
         manager.disconnect(websocket)
 
+
 # 에러 핸들러
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    return {
-        "error": "Not Found",
-        "message": "요청하신 리소스를 찾을 수 없습니다",
-        "path": str(request.url)
-    }
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Not Found",
+            "message": "요청하신 리소스를 찾을 수 없습니다",
+            "path": str(request.url)
+        }
+    )
 
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):
     logger.error(f"❌ Internal Server Error: {exc}")
-    return {
-        "error": "Internal Server Error", 
-        "message": "서버 내부 오류가 발생했습니다"
-    }
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error", 
+            "message": "서버 내부 오류가 발생했습니다"
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn

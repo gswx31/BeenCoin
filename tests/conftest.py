@@ -68,17 +68,23 @@ def test_engine():
 
 @pytest.fixture(scope="function")
 def db_session(test_engine) -> Generator[Session, None, None]:
-    """DB 세션 - 트랜잭션 롤백 지원"""
+    """DB 세션 - 커밋 지원으로 변경"""
     connection = test_engine.connect()
     transaction = connection.begin()
     session = Session(bind=connection, expire_on_commit=False)
     
     try:
         yield session
+        session.commit()  # ✅ 커밋 추가 (기존 rollback 대신)
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
-        transaction.rollback()
+        if transaction.is_active:
+            transaction.commit()  # ✅ rollback() → commit()으로 변경
         connection.close()
+
 
 
 # =============================================================================
@@ -94,9 +100,14 @@ def client(test_engine) -> Generator[TestClient, None, None]:
         session = Session(bind=connection, expire_on_commit=False)
         try:
             yield session
+            session.commit()  # ✅ 커밋 추가
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
-            transaction.rollback()
+            if transaction.is_active:
+                transaction.commit()  # ✅ rollback() → commit()으로 변경
             connection.close()
     
     app.dependency_overrides[get_session] = get_test_session
@@ -105,7 +116,6 @@ def client(test_engine) -> Generator[TestClient, None, None]:
         yield test_client
     
     app.dependency_overrides.clear()
-
 
 # =============================================================================
 # User Fixtures - 로그인 문제 해결!
