@@ -1,70 +1,44 @@
-# app/schemas/order.py
-"""
-주문 관련 스키마 - 수정 버전
-손절/익절 주문 지원
-"""
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, validator
 from decimal import Decimal
-from datetime import datetime
 from typing import Optional
-
+from app.core.config import settings
 
 class OrderCreate(BaseModel):
-    """주문 생성 요청"""
-    symbol: str = Field(..., description="거래 심볼 (예: BTCUSDT)")
-    side: str = Field(..., description="BUY 또는 SELL")
-    order_type: str = Field(..., description="MARKET, LIMIT, STOP_LOSS, TAKE_PROFIT")
-    quantity: Decimal = Field(..., gt=0, description="주문 수량")
-    price: Optional[Decimal] = Field(None, gt=0, description="지정가 (LIMIT만)")
-    stop_price: Optional[Decimal] = Field(None, gt=0, description="손절/익절 가격")
-    
-    @field_validator('side')
-    @classmethod
-    def validate_side(cls, v):
-        if v not in ['BUY', 'SELL']:
-            raise ValueError('side must be BUY or SELL')
-        return v
-    
-    @field_validator('order_type')
-    @classmethod
-    def validate_order_type(cls, v):
-        if v not in ['MARKET', 'LIMIT', 'STOP_LOSS', 'TAKE_PROFIT']:
-            raise ValueError('Invalid order_type')
-        return v
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "symbol": "BTCUSDT",
-                "side": "BUY",
-                "order_type": "MARKET",
-                "quantity": "0.1"
-            }
-        }
-
-
-class OrderOut(BaseModel):
-    """주문 응답"""
-    id: int
-    user_id: str
     symbol: str
     side: str
     order_type: str
-    order_status: str
     quantity: Decimal
     price: Optional[Decimal] = None
-    stop_price: Optional[Decimal] = None
+
+    @validator('symbol')
+    def validate_symbol(cls, v):
+        if v.upper() not in settings.SUPPORTED_SYMBOLS:
+            raise ValueError(f'Unsupported symbol: {v}. Supported: {settings.SUPPORTED_SYMBOLS}')
+        return v.upper()
+
+    @validator('side')
+    def validate_side(cls, v):
+        if v.upper() not in ['BUY', 'SELL']:
+            raise ValueError('Side must be BUY or SELL')
+        return v.upper()
+
+    @validator('order_type')
+    def validate_order_type(cls, v):
+        if v.upper() not in ['MARKET', 'LIMIT']:
+            raise ValueError('Order type must be MARKET or LIMIT')
+        return v.upper()
+
+    @validator('price')
+    def validate_price(cls, v, values):
+        if values.get('order_type') == 'LIMIT' and v is None:
+            raise ValueError('Price is required for LIMIT orders')
+        if values.get('order_type') == 'MARKET' and v is not None:
+            raise ValueError('Price should not be provided for MARKET orders')
+        return v
+
+class OrderOut(OrderCreate):
+    id: int
+    order_status: str
     filled_quantity: Decimal
-    average_price: Optional[Decimal] = None
-    fee: Optional[Decimal] = None
-    created_at: datetime
-    updated_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-
-class OrderListOut(BaseModel):
-    """주문 목록 응답"""
-    orders: list[OrderOut]
-    total: int
+    created_at: str
+    updated_at: str
