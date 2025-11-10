@@ -11,7 +11,7 @@ from app.services import portfolio_service
 from typing import Optional
 import logging
 
-router = APIRouter(prefix="/portfolio", tags=["portfolio"])
+router = APIRouter(tags=["portfolio"])
 logger = logging.getLogger(__name__)
 
 

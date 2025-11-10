@@ -11,7 +11,7 @@ from typing import List
 from decimal import Decimal
 from pydantic import BaseModel, field_serializer
 
-router = APIRouter(prefix="/account", tags=["Account"])
+router = APIRouter(tags=["Account"])
 
 class AccountSummary(BaseModel):
     """Account summary response"""

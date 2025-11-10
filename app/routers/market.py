@@ -13,7 +13,7 @@ from app.services.binance_service import (
 )
 from app.core.config import settings
 
-router = APIRouter(prefix="/market", tags=["Market Data"])
+router = APIRouter(tags=["Market Data"])
 
 @router.get("/price/{symbol}")
 async def get_price(symbol: str):

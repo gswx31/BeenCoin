@@ -16,7 +16,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/ws", tags=["WebSocket"])
+router = APIRouter(tags=["WebSocket"])
 
 # 연결된 클라이언트 관리
 class ConnectionManager:

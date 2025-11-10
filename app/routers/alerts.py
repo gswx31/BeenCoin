@@ -16,7 +16,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/alerts", tags=["Price Alerts"])
+router = APIRouter(tags=["Price Alerts"])
 
 class CreateAlertRequest(BaseModel):
     """Create alert request"""

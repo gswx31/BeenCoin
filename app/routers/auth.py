@@ -11,27 +11,13 @@ from app.utils.security import hash_password, verify_password, create_access_tok
 from datetime import timedelta
 from app.core.config import settings
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(tags=["Authentication"])
 
-@router.post("/register", response_model=UserResponse)
+@router.post("/auth/register", response_model=UserResponse)
 async def register(
     user_data: UserCreate,
     session: Session = Depends(get_session)
 ):
-    """
-    Register a new user
-    
-    Args:
-        user_data: User registration data
-        session: Database session
-    
-    Returns:
-        UserResponse: Created user
-    
-    Raises:
-        HTTPException: If username or email already exists
-    """
-    # Check if username exists
     existing_user = session.exec(
         select(User).where(User.username == user_data.username)
     ).first()
@@ -42,7 +28,6 @@ async def register(
             detail="Username already registered"
         )
     
-    # Check if email exists
     existing_email = session.exec(
         select(User).where(User.email == user_data.email)
     ).first()
@@ -53,7 +38,6 @@ async def register(
             detail="Email already registered"
         )
     
-    # Create user
     user = User(
         username=user_data.username,
         email=user_data.email,
@@ -64,32 +48,17 @@ async def register(
     session.commit()
     session.refresh(user)
     
-    # Create trading account
     trading_account = TradingAccount(user_id=user.id)
     session.add(trading_account)
     session.commit()
     
     return user
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/auth/login", response_model=TokenResponse)
 async def login(
     credentials: UserLogin,
     session: Session = Depends(get_session)
 ):
-    """
-    Login and get access token
-    
-    Args:
-        credentials: Login credentials
-        session: Database session
-    
-    Returns:
-        TokenResponse: Access token and user info
-    
-    Raises:
-        HTTPException: If credentials are invalid
-    """
-    # Get user
     user = session.exec(
         select(User).where(User.username == credentials.username)
     ).first()
@@ -106,7 +75,6 @@ async def login(
             detail="User account is inactive"
         )
     
-    # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username},
@@ -118,12 +86,6 @@ async def login(
         user=UserResponse.from_orm(user)
     )
 
-@router.post("/logout")
+@router.post("/auth/logout")
 async def logout():
-    """
-    Logout (client should discard token)
-    
-    Returns:
-        dict: Logout message
-    """
     return {"message": "Successfully logged out"}

@@ -16,7 +16,7 @@ from app.services.futures_service import futures_service
 from app.utils.security import get_current_user
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/futures", tags=["Futures Trading"])
+router = APIRouter(tags=["Futures Trading"])
 
 # Request schemas
 class OpenPositionRequest(BaseModel):

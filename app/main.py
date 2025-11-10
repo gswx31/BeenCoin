@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 import logging
 import sys
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -19,7 +18,6 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Import after logging is configured
 from app.core.config import settings
 from app.core.database import create_db_and_tables
 from app.routers import auth, orders, account, market, futures, alerts, websocket
@@ -28,22 +26,17 @@ from app.tasks.scheduler import start_background_tasks
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    # Startup
     logger.info("Starting BeenCoin API...")
     create_db_and_tables()
     logger.info("Database initialized")
     
-    # Start background tasks
     start_background_tasks()
     logger.info("Background tasks started")
     
     yield
     
-    # Shutdown
     logger.info("Shutting down BeenCoin API...")
 
-# Create FastAPI application
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
@@ -52,30 +45,27 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Add rate limiting middleware
 app.middleware("http")(rate_limit_middleware)
 
-# Include routers
-app.include_router(auth.router)
-app.include_router(orders.router)
-app.include_router(account.router)
-app.include_router(market.router)
-app.include_router(futures.router)
-app.include_router(alerts.router)
+# Include routers with API prefix
+app.include_router(auth.router, prefix=settings.API_V1_STR)
+app.include_router(orders.router, prefix=settings.API_V1_STR)
+app.include_router(account.router, prefix=settings.API_V1_STR)
+app.include_router(market.router, prefix=settings.API_V1_STR)
+app.include_router(futures.router, prefix=settings.API_V1_STR)
+app.include_router(alerts.router, prefix=settings.API_V1_STR)
 app.include_router(websocket.router)
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
     return {
         "name": settings.PROJECT_NAME,
         "version": settings.VERSION,
@@ -84,7 +74,6 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {"status": "healthy"}
 
 if __name__ == "__main__":
@@ -92,8 +81,8 @@ if __name__ == "__main__":
     
     uvicorn.run(
         "app.main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.RELOAD,
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        reload=True,
         log_level=settings.LOG_LEVEL.lower()
     )

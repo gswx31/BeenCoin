@@ -11,7 +11,7 @@ from app.schemas.order import OrderCreate, OrderResponse, OrderCancel
 from app.services.order_service import order_service
 from app.utils.security import get_current_user
 
-router = APIRouter(prefix="/orders", tags=["Orders"])
+router = APIRouter(tags=["Orders"])
 
 @router.post("/", response_model=OrderResponse)
 async def create_order(
