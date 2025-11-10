@@ -1,70 +1,59 @@
 # app/schemas/order.py
 """
-주문 관련 스키마 - 수정 버전
-손절/익절 주문 지원
+Order schemas for request/response validation
 """
-from pydantic import BaseModel, Field, field_validator
-from decimal import Decimal
-from datetime import datetime
+from pydantic import BaseModel, Field, validator
 from typing import Optional
+from datetime import datetime
+from decimal import Decimal
+from app.models.database import OrderType, OrderSide, OrderStatus
 
-
-class OrderCreate(BaseModel):
-    """주문 생성 요청"""
-    symbol: str = Field(..., description="거래 심볼 (예: BTCUSDT)")
-    side: str = Field(..., description="BUY 또는 SELL")
-    order_type: str = Field(..., description="MARKET, LIMIT, STOP_LOSS, TAKE_PROFIT")
-    quantity: Decimal = Field(..., gt=0, description="주문 수량")
-    price: Optional[Decimal] = Field(None, gt=0, description="지정가 (LIMIT만)")
-    stop_price: Optional[Decimal] = Field(None, gt=0, description="손절/익절 가격")
-    
-    @field_validator('side')
-    @classmethod
-    def validate_side(cls, v):
-        if v not in ['BUY', 'SELL']:
-            raise ValueError('side must be BUY or SELL')
-        return v
-    
-    @field_validator('order_type')
-    @classmethod
-    def validate_order_type(cls, v):
-        if v not in ['MARKET', 'LIMIT', 'STOP_LOSS', 'TAKE_PROFIT']:
-            raise ValueError('Invalid order_type')
-        return v
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "symbol": "BTCUSDT",
-                "side": "BUY",
-                "order_type": "MARKET",
-                "quantity": "0.1"
-            }
-        }
-
-
-class OrderOut(BaseModel):
-    """주문 응답"""
-    id: int
-    user_id: str
+class OrderBase(BaseModel):
+    """Base order schema"""
     symbol: str
-    side: str
-    order_type: str
-    order_status: str
-    quantity: Decimal
-    price: Optional[Decimal] = None
-    stop_price: Optional[Decimal] = None
-    filled_quantity: Decimal
-    average_price: Optional[Decimal] = None
-    fee: Optional[Decimal] = None
+    order_type: OrderType
+    order_side: OrderSide
+    quantity: Decimal = Field(..., gt=0)
+    price: Optional[Decimal] = Field(None, gt=0)
+    stop_price: Optional[Decimal] = Field(None, gt=0)
+    
+    @validator('price')
+    def validate_price_for_limit(cls, v, values):
+        if values.get('order_type') == OrderType.LIMIT and v is None:
+            raise ValueError('Price is required for LIMIT orders')
+        return v
+    
+    @validator('stop_price')
+    def validate_stop_price(cls, v, values):
+        if values.get('order_type') in [OrderType.STOP_LOSS, OrderType.TAKE_PROFIT] and v is None:
+            raise ValueError('Stop price is required for STOP_LOSS and TAKE_PROFIT orders')
+        return v
+
+class OrderCreate(OrderBase):
+    """Order creation schema"""
+    pass
+
+class OrderResponse(OrderBase):
+    """Order response schema"""
+    id: int
+    user_id: int
+    order_status: OrderStatus
+    executed_quantity: Decimal
+    executed_price: Optional[Decimal]
+    fee: Decimal
     created_at: datetime
     updated_at: datetime
     
     class Config:
         from_attributes = True
 
+class OrderUpdate(BaseModel):
+    """Order update schema"""
+    price: Optional[Decimal] = Field(None, gt=0)
+    quantity: Optional[Decimal] = Field(None, gt=0)
+    stop_price: Optional[Decimal] = Field(None, gt=0)
 
-class OrderListOut(BaseModel):
-    """주문 목록 응답"""
-    orders: list[OrderOut]
-    total: int
+class OrderCancel(BaseModel):
+    """Order cancellation schema"""
+    order_id: int
+    reason: Optional[str] = None

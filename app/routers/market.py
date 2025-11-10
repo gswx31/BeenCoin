@@ -1,219 +1,159 @@
 # app/routers/market.py
-from fastapi import APIRouter, HTTPException
-from app.services.binance_service import get_coin_info, get_historical_data, get_multiple_prices
+"""
+Market data routes
+"""
+from fastapi import APIRouter, Query, HTTPException, status
+from typing import Optional, List
+from app.services.binance_service import (
+    get_current_price,
+    get_ticker_24hr,
+    get_orderbook,
+    get_klines,
+    get_recent_trades
+)
 from app.core.config import settings
-from typing import List, Dict
-from datetime import datetime, timedelta
-import asyncio
-import httpx  # ✅ 추가
-import logging  # ✅ 추가
-import random
 
-router = APIRouter(prefix="/market", tags=["market"])
-logger = logging.getLogger(__name__)  # ✅ 추가
+router = APIRouter(prefix="/market", tags=["Market Data"])
 
-# 코인 메타데이터
-COINS_METADATA = {
-    "BTCUSDT": {
-        "symbol": "BTCUSDT",
-        "name": "Bitcoin",
-        "icon": "₿",
-        "color": "#F7931A",
-        "category": "메이저"
-    },
-    "ETHUSDT": {
-        "symbol": "ETHUSDT", 
-        "name": "Ethereum",
-        "icon": "Ξ",
-        "color": "#627EEA",
-        "category": "메이저"
-    },
-    "BNBUSDT": {
-        "symbol": "BNBUSDT",
-        "name": "Binance Coin", 
-        "icon": "⎈",
-        "color": "#F3BA2F",
-        "category": "메이저"
-    },
-    "ADAUSDT": {
-        "symbol": "ADAUSDT",
-        "name": "Cardano",
-        "icon": "₳",
-        "color": "#0033AD", 
-        "category": "알트코인"
-    }
-}
-
-@router.get("/coins")
-async def get_all_coins():
-    """모든 지원 코인의 실시간 정보 반환"""
-    all_symbols = list(COINS_METADATA.keys())
+@router.get("/price/{symbol}")
+async def get_price(symbol: str):
+    """Get current price for a symbol"""
+    
+    if symbol not in settings.SUPPORTED_SYMBOLS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported symbol: {symbol}"
+        )
     
     try:
-        tasks = [get_coin_info(symbol) for symbol in all_symbols]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        coins_with_data = []
-        for i, symbol in enumerate(all_symbols):
-            coin_data = COINS_METADATA[symbol].copy()
-            
-            if not isinstance(results[i], Exception) and results[i]:
-                info = results[i]
-                coin_data['price'] = info.get('price', '0')
-                coin_data['change'] = info.get('change', '0')
-                coin_data['volume'] = info.get('volume', '0')
-                coin_data['high'] = info.get('high', '0')
-                coin_data['low'] = info.get('low', '0')
-            else:
-                coin_data['price'] = '0'
-                coin_data['change'] = '0'
-                coin_data['volume'] = '0'
-                coin_data['high'] = '0'
-                coin_data['low'] = '0'
-            
-            coins_with_data.append(coin_data)
-        
-        return coins_with_data
-        
+        price = await get_current_price(symbol)
+        return {
+            "symbol": symbol,
+            "price": price,
+            "timestamp": "now"
+        }
     except Exception as e:
-        logger.error(f"Error in get_all_coins: {e}")
-        return [
-            {**meta, 'price': '0', 'change': '0', 'volume': '0'} 
-            for meta in COINS_METADATA.values()
-        ]
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
 
-@router.get("/coin/{symbol}")
-async def get_coin_detail(symbol: str):
-    """특정 코인의 상세 정보"""
-    try:
-        info = await get_coin_info(symbol)
-        if not info:
-            raise HTTPException(status_code=404, detail="Coin not found")
-        
-        if symbol in COINS_METADATA:
-            info.update(COINS_METADATA[symbol])
-        
-        return info
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.get("/historical/{symbol}")
-async def get_historical_prices(symbol: str, interval: str = "1h", limit: int = 24):
-    """과거 가격 데이터"""
-    try:
-        valid_binance_intervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M']
-        simulated_intervals = ['1s', '5s', '15s', '30s']
-        
-        actual_interval = interval
-        use_simulation = False
-        
-        if interval in simulated_intervals:
-            actual_interval = '1m'
-            use_simulation = True
-        elif interval not in valid_binance_intervals:
-            actual_interval = "1h"
-        
-        if limit > 1000:
-            limit = 1000
-        elif limit < 1:
-            limit = 24
-        
-        data = await get_historical_data(symbol, actual_interval, limit)
-        
-        if not data:
-            raise HTTPException(status_code=404, detail="No historical data found")
-        
-        if use_simulation:
-            data = simulate_sub_minute_data(data, interval, limit)
-        
-        return data
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-def simulate_sub_minute_data(minute_data: List[Dict], target_interval: str, target_limit: int) -> List[Dict]:
-    """1분 데이터를 기반으로 초 단위 데이터 시뮬레이션"""
-    seconds_map = {'1s': 1, '5s': 5, '15s': 15, '30s': 30}
-    seconds = seconds_map.get(target_interval, 1)
+@router.get("/ticker/{symbol}")
+async def get_ticker(symbol: str):
+    """Get 24hr ticker statistics"""
     
-    simulated = []
+    if symbol not in settings.SUPPORTED_SYMBOLS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported symbol: {symbol}"
+        )
     
-    for candle in minute_data:
-        num_sub_candles = 60 // seconds
-        base_timestamp = datetime.fromisoformat(candle['timestamp'])
-        
-        price_range = candle['high'] - candle['low']
-        current_price = candle['open']
-        
-        for i in range(num_sub_candles):
-            price_change = random.uniform(-price_range * 0.1, price_range * 0.1)
-            next_price = max(candle['low'], min(candle['high'], current_price + price_change))
-            
-            if i == num_sub_candles - 1:
-                next_price = candle['close']
-            
-            sub_candle = {
-                'timestamp': (base_timestamp + timedelta(seconds=i * seconds)).isoformat(),
-                'open': current_price,
-                'high': max(current_price, next_price) + random.uniform(0, price_range * 0.05),
-                'low': min(current_price, next_price) - random.uniform(0, price_range * 0.05),
-                'close': next_price,
-                'volume': candle['volume'] / num_sub_candles
-            }
-            
-            simulated.append(sub_candle)
-            current_price = next_price
-            
-            if len(simulated) >= target_limit:
-                break
-        
-        if len(simulated) >= target_limit:
-            break
-    
-    return simulated[-target_limit:]
-
-@router.get("/prices")
-async def get_all_prices():
-    """모든 지원 코인의 현재 가격만 조회"""
     try:
-        all_symbols = list(COINS_METADATA.keys())
-        prices = await get_multiple_prices(all_symbols)
-        return {symbol: str(price) for symbol, price in prices.items()}
+        ticker = await get_ticker_24hr(symbol)
+        return ticker
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
+
+@router.get("/orderbook/{symbol}")
+async def get_depth(
+    symbol: str,
+    limit: int = Query(10, ge=5, le=100, description="Number of price levels")
+):
+    """Get order book depth"""
+    
+    if symbol not in settings.SUPPORTED_SYMBOLS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported symbol: {symbol}"
+        )
+    
+    try:
+        orderbook = await get_orderbook(symbol, limit)
+        return orderbook
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
+
+@router.get("/klines/{symbol}")
+async def get_candlesticks(
+    symbol: str,
+    interval: str = Query("1h", description="Kline interval"),
+    limit: int = Query(100, ge=1, le=500, description="Number of klines")
+):
+    """Get candlestick data"""
+    
+    if symbol not in settings.SUPPORTED_SYMBOLS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported symbol: {symbol}"
+        )
+    
+    valid_intervals = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]
+    if interval not in valid_intervals:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid interval. Valid intervals: {', '.join(valid_intervals)}"
+        )
+    
+    try:
+        klines = await get_klines(symbol, interval, limit)
+        
+        # Format klines for better readability
+        formatted_klines = []
+        for k in klines:
+            formatted_klines.append({
+                "open_time": k[0],
+                "open": k[1],
+                "high": k[2],
+                "low": k[3],
+                "close": k[4],
+                "volume": k[5],
+                "close_time": k[6],
+                "quote_volume": k[7],
+                "trades": k[8],
+                "taker_buy_base": k[9],
+                "taker_buy_quote": k[10]
+            })
+        
+        return formatted_klines
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
 
 @router.get("/trades/{symbol}")
-async def get_recent_trades(symbol: str, limit: int = 20):
-    """바이낸스 실시간 체결 내역"""
+async def get_trades(
+    symbol: str,
+    limit: int = Query(100, ge=1, le=500, description="Number of trades")
+):
+    """Get recent trades"""
+    
+    if symbol not in settings.SUPPORTED_SYMBOLS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported symbol: {symbol}"
+        )
+    
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"https://api.binance.com/api/v3/trades",
-                params={"symbol": symbol, "limit": limit}
-            )
-            
-            if response.status_code == 200:
-                trades = response.json()
-                return [
-                    {
-                        "id": trade["id"],
-                        "price": float(trade["price"]),
-                        "quantity": float(trade["qty"]),
-                        "time": datetime.fromtimestamp(trade["time"] / 1000).isoformat(),
-                        "isBuyerMaker": trade["isBuyerMaker"]
-                    }
-                    for trade in trades
-                ]
-            else:
-                raise HTTPException(status_code=503, detail="Binance API 오류")
-                
-    except httpx.TimeoutException:
-        logger.error(f"❌ Binance trades timeout: {symbol}")
-        raise HTTPException(status_code=503, detail="Binance API 타임아웃")
+        trades = await get_recent_trades(symbol, limit)
+        return trades
     except Exception as e:
-        logger.error(f"❌ Get trades failed: {e}")
-        raise HTTPException(status_code=500, detail=f"체결 내역 조회 실패: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
+
+@router.get("/symbols")
+async def get_supported_symbols():
+    """Get list of supported trading symbols"""
+    
+    return {
+        "symbols": settings.SUPPORTED_SYMBOLS,
+        "count": len(settings.SUPPORTED_SYMBOLS)
+    }

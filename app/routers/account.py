@@ -1,118 +1,196 @@
 # app/routers/account.py
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+"""
+Account management routes
+"""
+from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 from app.core.database import get_session
-from app.utils.security import get_current_user
 from app.models.database import User, TradingAccount, Position, Transaction
-from app.services.binance_service import get_current_price
-from typing import List, Dict, Any
-import logging
+from app.utils.security import get_current_user
+from typing import List
 from decimal import Decimal
+from pydantic import BaseModel, field_serializer
 
-router = APIRouter(prefix="/account", tags=["account"])
-logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/account", tags=["Account"])
 
+class AccountSummary(BaseModel):
+    """Account summary response"""
+    balance: Decimal
+    locked_balance: Decimal
+    total_profit: Decimal
+    total_volume: Decimal
+    positions_value: Decimal
+    total_value: Decimal
+    
+    @field_serializer('balance', 'locked_balance', 'total_profit', 'total_volume', 'positions_value', 'total_value')
+    def serialize_decimal(self, value: Decimal) -> str:
+        """Serialize Decimal fields"""
+        if value is None:
+            return None
+        # Format to 8 decimal places and remove trailing zeros
+        formatted = f"{value:.8f}".rstrip('0').rstrip('.')
+        # If the value is a whole number, keep one decimal place
+        if '.' not in formatted:
+            formatted = f"{value:.1f}"
+        return formatted
 
-@router.get("/")
-async def get_account(
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
-) -> Dict[str, Any]:
-    """계정 요약"""
-    try:
-        account = session.exec(
-            select(TradingAccount).where(TradingAccount.user_id == current_user.id)
-        ).first()
-        
-        if not account:
-            raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
-        
-        positions = session.exec(
-            select(Position)
-            .where(Position.account_id == account.id)
-            .where(Position.quantity > 0)
-        ).all()
-        
-        positions_data = []
-        positions_value = Decimal('0')
-        unrealized_profit_total = Decimal('0')
-        
-        for pos in positions:
-            try:
-                current_price = await get_current_price(pos.symbol)
-                position_value = pos.quantity * current_price
-                invested_value = pos.quantity * pos.average_price
-                unrealized_profit = position_value - invested_value
-                profit_rate = float((unrealized_profit / invested_value) * 100) if invested_value > 0 else 0
-                
-                positions_data.append({
-                    "symbol": pos.symbol,
-                    "quantity": float(pos.quantity),
-                    "average_price": float(pos.average_price),
-                    "current_price": float(current_price),
-                    "invested_value": float(invested_value),
-                    "current_value": float(position_value),
-                    "unrealized_profit": float(unrealized_profit),
-                    "profit_rate": round(profit_rate, 2)
-                })
-                
-                positions_value += position_value
-                unrealized_profit_total += unrealized_profit
-                
-            except Exception as e:
-                logger.error(f"❌ {pos.symbol} 가격 조회 실패: {e}")
-        
-        total_value = account.balance + positions_value
-        
-        result = {
-            "balance": float(account.balance),
-            "total_profit": float(account.total_profit),
-            "positions_value": float(positions_value),
-            "total_value": float(total_value),
-            "unrealized_profit": float(unrealized_profit_total),
-            "positions": positions_data
-        }
-        
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ 계정 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail="계정 조회 중 오류가 발생했습니다")
+@router.get("/summary", response_model=AccountSummary)
+async def get_account_summary(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Get account summary"""
+    
+    # Get trading account
+    account = session.exec(
+        select(TradingAccount).where(TradingAccount.user_id == current_user.id)
+    ).first()
+    
+    if not account:
+        account = TradingAccount(user_id=current_user.id)
+        session.add(account)
+        session.commit()
+        session.refresh(account)
+    
+    # Calculate positions value
+    positions = session.exec(
+        select(Position).where(
+            Position.user_id == current_user.id,
+            Position.position_status == "OPEN"
+        )
+    ).all()
+    
+    positions_value = sum(
+        pos.quantity * (pos.current_price or pos.average_price) 
+        for pos in positions
+    )
+    
+    total_value = account.balance + positions_value
+    
+    return AccountSummary(
+        balance=account.balance,
+        locked_balance=account.locked_balance,
+        total_profit=account.total_profit,
+        total_volume=account.total_volume,
+        positions_value=positions_value,
+        total_value=total_value
+    )
 
+@router.get("/positions")
+async def get_positions(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all user positions"""
+    
+    positions = session.exec(
+        select(Position).where(Position.user_id == current_user.id)
+    ).all()
+    
+    return positions
 
 @router.get("/transactions")
-def get_transactions(
-    current_user: User = Depends(get_current_user),
+async def get_transactions(
+    limit: int = 50,
+    offset: int = 0,
     session: Session = Depends(get_session),
-    limit: int = 100
-) -> List[Dict[str, Any]]:
-    """거래 내역"""
-    try:
-        transactions = session.exec(
-            select(Transaction)
-            .where(Transaction.user_id == current_user.id)
-            .order_by(Transaction.timestamp.desc())
-            .limit(limit)
-        ).all()
+    current_user: User = Depends(get_current_user)
+):
+    """Get transaction history"""
+    
+    transactions = session.exec(
+        select(Transaction)
+        .where(Transaction.user_id == current_user.id)
+        .order_by(Transaction.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
+    
+    return transactions
+
+@router.get("/portfolio")
+async def get_portfolio(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Get portfolio overview"""
+    
+    # Get open positions
+    positions = session.exec(
+        select(Position).where(
+            Position.user_id == current_user.id,
+            Position.position_status == "OPEN"
+        )
+    ).all()
+    
+    # Calculate portfolio metrics
+    portfolio = []
+    for position in positions:
+        current_value = position.quantity * (position.current_price or position.average_price)
+        cost_basis = position.quantity * position.average_price
+        pnl = current_value - cost_basis
+        pnl_percentage = (pnl / cost_basis * 100) if cost_basis > 0 else 0
         
-        result = [
-            {
-                "id": tx.id,
-                "symbol": tx.symbol,
-                "side": tx.side,
-                "quantity": float(tx.quantity),
-                "price": float(tx.price),
-                "fee": float(tx.fee),
-                "timestamp": str(tx.timestamp)
-            }
-            for tx in transactions
-        ]
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"❌ 거래 내역 조회 실패: {e}")
-        raise HTTPException(status_code=500, detail="거래 내역 조회 중 오류가 발생했습니다")
+        portfolio.append({
+            "symbol": position.symbol,
+            "quantity": position.quantity,
+            "average_price": position.average_price,
+            "current_price": position.current_price,
+            "current_value": current_value,
+            "cost_basis": cost_basis,
+            "unrealized_pnl": pnl,
+            "unrealized_pnl_percentage": pnl_percentage,
+            "realized_pnl": position.realized_pnl
+        })
+    
+    return portfolio
+
+@router.get("/portfolio/performance")
+async def get_portfolio_performance(
+    period_days: int = 30,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Get portfolio performance metrics"""
+    
+    from app.services.portfolio_service import portfolio_service
+    
+    performance = await portfolio_service.get_portfolio_performance(
+        session=session,
+        user_id=current_user.id,
+        period_days=period_days
+    )
+    
+    return performance
+
+@router.get("/portfolio/allocation")
+async def get_portfolio_allocation(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Get asset allocation breakdown"""
+    
+    from app.services.portfolio_service import portfolio_service
+    
+    allocation = await portfolio_service.get_asset_allocation(
+        session=session,
+        user_id=current_user.id
+    )
+    
+    return allocation
+
+@router.get("/portfolio/summary")
+async def get_portfolio_summary_detailed(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """Get detailed portfolio summary"""
+    
+    from app.services.portfolio_service import portfolio_service
+    
+    summary = await portfolio_service.get_portfolio_summary(
+        session=session,
+        user_id=current_user.id
+    )
+    
+    return summary

@@ -5,17 +5,14 @@
 - 조건 만족 시 자동 청산
 """
 from sqlmodel import Session, select
-from app.models.database import Order, OrderType, OrderStatus, OrderSide
-from app.models.futures import FuturesPosition, FuturesPositionStatus
-from app.services.binance_service import get_recent_trades
-from app.services.order_service import execute_market_order_complete
-from app.services.futures_service import close_futures_position
+from app.models.database import Order, OrderType, OrderStatus, OrderSide, Position, PositionStatus
+from app.models.futures import FuturesPosition, FuturesPositionStatus, FuturesPositionSide
+from app.services.binance_service import get_recent_trades, get_current_price
 from decimal import Decimal
 from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
-
 
 async def check_stop_loss_take_profit_orders(session: Session):
     """
@@ -140,78 +137,70 @@ async def execute_stop_loss_take_profit(
     """
     
     try:
-        from app.models.database import TradingAccount
+        from app.models.database import TradingAccount, Transaction
+        from app.services.order_service import OrderService
         
         # 계정 조회
-        account = session.get(TradingAccount, order.account_id)
+        account = session.exec(
+            select(TradingAccount).where(TradingAccount.user_id == order.user_id)
+        ).first()
+        
         if not account:
             raise Exception("계정을 찾을 수 없습니다")
         
-        # 조건에 맞는 체결 내역 필터링
-        eligible_trades = []
+        # 현재 가격으로 체결
+        current_price = await get_current_price(order.symbol)
         
-        for trade in recent_trades:
-            trade_price = Decimal(str(trade['price']))
+        # 수수료 계산
+        from app.core.config import settings
+        fee = order.quantity * Decimal(str(current_price)) * Decimal(str(settings.DEFAULT_TRADING_FEE))
+        
+        # 주문 업데이트
+        order.executed_quantity = order.quantity
+        order.executed_price = Decimal(str(current_price))
+        order.fee = fee
+        order.order_status = OrderStatus.FILLED
+        order.updated_at = datetime.utcnow()
+        
+        # 포지션 업데이트 (매도)
+        position = session.exec(
+            select(Position).where(
+                Position.user_id == order.user_id,
+                Position.symbol == order.symbol,
+                Position.position_status == PositionStatus.OPEN
+            )
+        ).first()
+        
+        if position:
+            # PnL 계산
+            realized_pnl = (order.executed_price - position.average_price) * order.quantity
+            position.realized_pnl += realized_pnl
+            position.quantity -= order.quantity
             
-            if order.order_type == OrderType.STOP_LOSS:
-                if trade_price <= order.stop_price:
-                    eligible_trades.append(trade)
-            elif order.order_type == OrderType.TAKE_PROFIT:
-                if trade_price >= order.stop_price:
-                    eligible_trades.append(trade)
+            if position.quantity <= 0:
+                position.position_status = PositionStatus.CLOSED
+            
+            # 계정 업데이트
+            revenue = (order.executed_price * order.quantity) - fee
+            account.balance += revenue
+            account.total_profit += realized_pnl
         
-        if not eligible_trades:
-            logger.warning(f"⚠️ 조건 만족 체결 내역 없음: {order.symbol}")
-            return
-        
-        # 가격 정렬 (매도이므로 높은 가격 우선)
-        sorted_trades = sorted(
-            eligible_trades, 
-            key=lambda x: Decimal(str(x['price'])),
-            reverse=True
+        # 거래 내역 추가
+        transaction = Transaction(
+            user_id=order.user_id,
+            order_id=order.id,
+            transaction_type=f"TRADE_{order.order_type.value}",
+            amount=order.quantity * order.executed_price,
+            balance_after=account.balance,
+            description=f"{order.order_type.value} {order.quantity} {order.symbol} @ {order.executed_price}"
         )
         
-        # 체결 처리
-        remaining_quantity = order.quantity
-        total_cost = Decimal("0")
-        filled_quantity = Decimal("0")
-        
-        for trade in sorted_trades:
-            if remaining_quantity <= 0:
-                break
-            
-            trade_price = Decimal(str(trade['price']))
-            trade_quantity = Decimal(str(trade['quantity']))
-            
-            fill_qty = min(remaining_quantity, trade_quantity)
-            
-            total_cost += fill_qty * trade_price
-            filled_quantity += fill_qty
-            remaining_quantity -= fill_qty
-            
-            logger.debug(f"  📊 체결: {fill_qty} @ ${trade_price}")
-        
-        # 남은 수량은 stop_price로 체결
-        if remaining_quantity > 0:
-            total_cost += remaining_quantity * order.stop_price
-            filled_quantity += remaining_quantity
-            logger.debug(
-                f"  📊 나머지 체결: {remaining_quantity} @ ${order.stop_price}"
-            )
-        
-        # 평균 체결가
-        average_price = total_cost / filled_quantity if filled_quantity > 0 else order.stop_price
+        session.add(transaction)
+        session.commit()
         
         logger.info(
             f"📈 {order.order_type.value} 체결 완료: "
-            f"{filled_quantity} {order.symbol} @ 평균 ${average_price:.2f}"
-        )
-        
-        # 최종 처리
-        from app.services.order_service import finalize_order_execution
-        await finalize_order_execution(
-            session, order, account,
-            filled_quantity, average_price
+            f"{order.quantity} {order.symbol} @ ${current_price:.2f}"
         )
         
     except Exception as e:
@@ -225,8 +214,8 @@ async def check_futures_stop_loss_take_profit(session: Session):
     선물 거래 손절/익절 체크
     
     로직:
-    1. OPEN 상태 포지션 중 stop_loss_price, take_profit_price 설정된 것 조회
-    2. 최근 체결 내역에서 가격 도달 여부 확인
+    1. OPEN 상태 포지션 중 stop_loss, take_profit 설정된 것 조회
+    2. 현재 가격과 비교
     3. 조건 만족 시 자동 청산
     """
     
@@ -234,81 +223,59 @@ async def check_futures_stop_loss_take_profit(session: Session):
         # 손절/익절 설정된 포지션 조회
         positions = session.exec(
             select(FuturesPosition).where(
-                FuturesPosition.status == FuturesPositionStatus.OPEN,
-                (FuturesPosition.stop_loss_price.isnot(None)) | 
-                (FuturesPosition.take_profit_price.isnot(None))
+                FuturesPosition.status == FuturesPositionStatus.OPEN
             )
         ).all()
         
-        if not positions:
-            return
-        
-        logger.debug(f"🔍 선물 손절/익절 체크: {len(positions)}개 포지션")
-        
-        # 심볼별 최근 체결 내역 캐시
-        trades_cache = {}
-        
         for position in positions:
+            if not position.stop_loss and not position.take_profit:
+                continue
+                
             try:
-                # 최근 체결 내역 조회
-                if position.symbol not in trades_cache:
-                    trades_cache[position.symbol] = await get_recent_trades(
-                        position.symbol,
-                        limit=100
-                    )
+                # 현재 가격 조회
+                current_price = await get_current_price(position.symbol)
+                current_price = Decimal(str(current_price))
                 
-                recent_trades = trades_cache[position.symbol]
-                
-                if not recent_trades:
-                    continue
-                
-                # 가격 범위 확인
-                prices = [Decimal(str(t['price'])) for t in recent_trades]
-                min_price = min(prices)
-                max_price = max(prices)
+                should_close = False
+                close_reason = ""
                 
                 # 손절 체크
-                if position.stop_loss_price:
-                    should_stop_loss = False
-                    
+                if position.stop_loss:
                     if position.side == FuturesPositionSide.LONG:
                         # 롱: 가격 하락 시 손절
-                        should_stop_loss = min_price <= position.stop_loss_price
+                        if current_price <= position.stop_loss:
+                            should_close = True
+                            close_reason = "STOP_LOSS"
                     else:  # SHORT
                         # 숏: 가격 상승 시 손절
-                        should_stop_loss = max_price >= position.stop_loss_price
-                    
-                    if should_stop_loss:
-                        await execute_futures_stop_loss(
-                            session, position, recent_trades
-                        )
-                        logger.warning(
-                            f"🔴 선물 손절 체결: {position.symbol} "
-                            f"{position.side.value} #{position.id}"
-                        )
-                        continue
+                        if current_price >= position.stop_loss:
+                            should_close = True
+                            close_reason = "STOP_LOSS"
                 
                 # 익절 체크
-                if position.take_profit_price:
-                    should_take_profit = False
-                    
+                if not should_close and position.take_profit:
                     if position.side == FuturesPositionSide.LONG:
                         # 롱: 가격 상승 시 익절
-                        should_take_profit = max_price >= position.take_profit_price
+                        if current_price >= position.take_profit:
+                            should_close = True
+                            close_reason = "TAKE_PROFIT"
                     else:  # SHORT
                         # 숏: 가격 하락 시 익절
-                        should_take_profit = min_price <= position.take_profit_price
+                        if current_price <= position.take_profit:
+                            should_close = True
+                            close_reason = "TAKE_PROFIT"
+                
+                if should_close:
+                    await execute_futures_auto_close(
+                        session, position, current_price, close_reason
+                    )
                     
-                    if should_take_profit:
-                        await execute_futures_take_profit(
-                            session, position, recent_trades
-                        )
-                        logger.info(
-                            f"🟢 선물 익절 체결: {position.symbol} "
-                            f"{position.side.value} #{position.id}"
-                        )
-                        continue
-            
+                    logger.info(
+                        f"{'🔴' if close_reason == 'STOP_LOSS' else '🟢'} "
+                        f"선물 {close_reason}: {position.symbol} "
+                        f"{position.side.value} #{position.id}"
+                    )
+                    
             except Exception as e:
                 logger.error(f"❌ 포지션 체크 실패 {position.id}: {e}")
                 continue
@@ -317,167 +284,30 @@ async def check_futures_stop_loss_take_profit(session: Session):
         logger.error(f"❌ 선물 손절/익절 체크 실패: {e}")
 
 
-async def execute_futures_stop_loss(
+async def execute_futures_auto_close(
     session: Session,
     position: FuturesPosition,
-    recent_trades: list
+    close_price: Decimal,
+    reason: str
 ):
-    """선물 손절 체결"""
+    """선물 포지션 자동 청산"""
     
     try:
         from app.models.futures import FuturesAccount, FuturesTransaction
+        from app.services.futures_service import futures_service
         
-        # 손절가 이하/이상 거래 찾기
-        eligible_trades = []
-        
-        for trade in recent_trades:
-            trade_price = Decimal(str(trade['price']))
-            
-            if position.side == FuturesPositionSide.LONG:
-                # 롱: 손절가 이하
-                if trade_price <= position.stop_loss_price:
-                    eligible_trades.append(trade)
-            else:  # SHORT
-                # 숏: 손절가 이상
-                if trade_price >= position.stop_loss_price:
-                    eligible_trades.append(trade)
-        
-        # 평균 청산가 계산
-        if eligible_trades:
-            avg_price = sum(
-                Decimal(str(t['price'])) for t in eligible_trades
-            ) / len(eligible_trades)
-        else:
-            avg_price = position.stop_loss_price
-        
-        # 손익 계산
-        pnl = position.calculate_pnl(avg_price)
-        fee_rate = Decimal("0.0004")
-        position_value = avg_price * position.quantity
-        fee = position_value * fee_rate
-        net_pnl = pnl - fee
-        
-        # 계정 업데이트
-        account = session.get(FuturesAccount, position.account_id)
-        account.balance += (position.margin + net_pnl)
-        account.margin_used -= position.margin
-        account.total_profit += net_pnl
-        account.unrealized_pnl -= position.unrealized_pnl
-        account.updated_at = datetime.utcnow()
-        
-        # 포지션 업데이트
-        position.status = FuturesPositionStatus.CLOSED
-        position.mark_price = avg_price
-        position.realized_pnl = net_pnl
-        position.closed_at = datetime.utcnow()
-        
-        # 거래 내역
-        transaction = FuturesTransaction(
-            user_id=account.user_id,
-            position_id=position.id,
-            symbol=position.symbol,
-            side=position.side,
-            action="STOP_LOSS",
-            quantity=position.quantity,
-            price=avg_price,
-            leverage=position.leverage,
-            pnl=net_pnl,
-            fee=fee,
-            timestamp=datetime.utcnow()
+        # Close position using futures service
+        closed_position = await futures_service.close_position(
+            session=session,
+            user_id=position.user_id,
+            position_id=position.id
         )
-        
-        session.add_all([account, position, transaction])
-        session.commit()
-        
-        logger.warning(
-            f"🔴 손절 체결: {position.symbol} {position.side.value} "
-            f"손실: ${net_pnl:.2f} (청산가: ${avg_price:.2f})"
-        )
-    
-    except Exception as e:
-        session.rollback()
-        logger.error(f"❌ 선물 손절 실패: {e}")
-        raise
-
-
-async def execute_futures_take_profit(
-    session: Session,
-    position: FuturesPosition,
-    recent_trades: list
-):
-    """선물 익절 체결"""
-    
-    try:
-        from app.models.futures import FuturesAccount, FuturesTransaction
-        
-        # 익절가 이상/이하 거래 찾기
-        eligible_trades = []
-        
-        for trade in recent_trades:
-            trade_price = Decimal(str(trade['price']))
-            
-            if position.side == FuturesPositionSide.LONG:
-                # 롱: 익절가 이상
-                if trade_price >= position.take_profit_price:
-                    eligible_trades.append(trade)
-            else:  # SHORT
-                # 숏: 익절가 이하
-                if trade_price <= position.take_profit_price:
-                    eligible_trades.append(trade)
-        
-        # 평균 청산가 계산
-        if eligible_trades:
-            avg_price = sum(
-                Decimal(str(t['price'])) for t in eligible_trades
-            ) / len(eligible_trades)
-        else:
-            avg_price = position.take_profit_price
-        
-        # 손익 계산
-        pnl = position.calculate_pnl(avg_price)
-        fee_rate = Decimal("0.0004")
-        position_value = avg_price * position.quantity
-        fee = position_value * fee_rate
-        net_pnl = pnl - fee
-        
-        # 계정 업데이트
-        account = session.get(FuturesAccount, position.account_id)
-        account.balance += (position.margin + net_pnl)
-        account.margin_used -= position.margin
-        account.total_profit += net_pnl
-        account.unrealized_pnl -= position.unrealized_pnl
-        account.updated_at = datetime.utcnow()
-        
-        # 포지션 업데이트
-        position.status = FuturesPositionStatus.CLOSED
-        position.mark_price = avg_price
-        position.realized_pnl = net_pnl
-        position.closed_at = datetime.utcnow()
-        
-        # 거래 내역
-        transaction = FuturesTransaction(
-            user_id=account.user_id,
-            position_id=position.id,
-            symbol=position.symbol,
-            side=position.side,
-            action="TAKE_PROFIT",
-            quantity=position.quantity,
-            price=avg_price,
-            leverage=position.leverage,
-            pnl=net_pnl,
-            fee=fee,
-            timestamp=datetime.utcnow()
-        )
-        
-        session.add_all([account, position, transaction])
-        session.commit()
         
         logger.info(
-            f"🟢 익절 체결: {position.symbol} {position.side.value} "
-            f"수익: ${net_pnl:.2f} (청산가: ${avg_price:.2f})"
+            f"✅ 선물 {reason} 체결: {position.symbol} {position.side.value} "
+            f"손익: ${closed_position.realized_pnl:.2f}"
         )
-    
+        
     except Exception as e:
-        session.rollback()
-        logger.error(f"❌ 선물 익절 실패: {e}")
+        logger.error(f"❌ 선물 자동 청산 실패: {e}")
         raise

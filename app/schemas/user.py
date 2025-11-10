@@ -1,12 +1,14 @@
-# app/schemas/user.py
+# app/schemas/user.py - 완성된 코드
 from pydantic import BaseModel, field_validator
 from typing import Optional
+from datetime import datetime
 
 class UserBase(BaseModel):
     username: str
 
 class UserCreate(UserBase):
     password: str
+    email: str
 
     @field_validator('username')
     @classmethod
@@ -28,12 +30,34 @@ class UserCreate(UserBase):
             raise ValueError('비밀번호는 50자 이하여야 합니다.')
         return v
 
+    @field_validator('email')
+    @classmethod
+    def email_validation(cls, v):
+        if not v or '@' not in v:
+            raise ValueError('유효한 이메일 주소를 입력해주세요.')
+        return v
+
 class UserLogin(UserBase):
     password: str
 
 class UserOut(UserBase):
-    id: str  # UUID
+    id: str
     created_at: str
     
     class Config:
         from_attributes = True
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    created_at: datetime
+    is_active: bool = True
+    
+    class Config:
+        from_attributes = True
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse

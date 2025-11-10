@@ -1,354 +1,100 @@
 # app/models/futures.py
 """
-선물 거래 데이터베이스 모델 - UUID 보안 적용
+Futures trading models
 """
-from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional, List
+from sqlmodel import Field, SQLModel, Relationship
+from typing import Optional
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-import uuid
-
-
-# =====================================================
-# Enums
-# =====================================================
-
-class FuturesPositionSide(str, Enum):
-    """선물 포지션 방향"""
-    LONG = "LONG"    # 롱 (매수 포지션)
-    SHORT = "SHORT"  # 숏 (매도 포지션)
-
 
 class FuturesOrderType(str, Enum):
-    """선물 주문 타입"""
-    MARKET = "MARKET"          # 시장가
-    LIMIT = "LIMIT"            # 지정가
-    STOP_LOSS = "STOP_LOSS"    # 손절 (로스컷)
-    TAKE_PROFIT = "TAKE_PROFIT"  # 익절 (베네핏컷)
+    MARKET = "MARKET"
+    LIMIT = "LIMIT"
+    STOP = "STOP"
+    STOP_MARKET = "STOP_MARKET"
+    TAKE_PROFIT = "TAKE_PROFIT"
+    TAKE_PROFIT_MARKET = "TAKE_PROFIT_MARKET"
 
+class FuturesPositionSide(str, Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
 
 class FuturesPositionStatus(str, Enum):
-    """선물 포지션 상태"""
-    OPEN = "OPEN"          # 포지션 열림
-    CLOSED = "CLOSED"      # 포지션 닫힘
-    LIQUIDATED = "LIQUIDATED"  # 청산됨
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    LIQUIDATED = "LIQUIDATED"
 
-
-# =====================================================
-# 선물 계정 모델
-# =====================================================
-
+# Futures Account Model
 class FuturesAccount(SQLModel, table=True):
-    """선물 거래 계정 (현물 계정과 분리)"""
+    """Futures trading account"""
     __tablename__ = "futures_accounts"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="선물 계정 UUID"
-    )
-    user_id: str = Field(foreign_key="users.id", index=True, unique=True)
-    
-    # 잔액
-    balance: Decimal = Field(
-        default=Decimal("100000"),
-        max_digits=20,
-        decimal_places=8,
-        description="사용 가능한 증거금"
-    )
-    margin_used: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="포지션에 사용 중인 증거금"
-    )
-    
-    # 수익 정보
-    total_profit: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="누적 실현 손익"
-    )
-    unrealized_pnl: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="미실현 손익 (모든 포지션 합계)"
-    )
-    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", unique=True)
+    usdt_balance: Decimal = Field(default=100000.0)
+    margin_balance: Decimal = Field(default=0.0)
+    unrealized_pnl: Decimal = Field(default=0.0)
+    realized_pnl: Decimal = Field(default=0.0)
+    total_volume: Decimal = Field(default=0.0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relationships
-    positions: List["FuturesPosition"] = Relationship(back_populates="account")
-    
-    @property
-    def total_balance(self) -> Decimal:
-        """총 자산 = 잔액 + 사용 중 증거금 + 미실현 손익"""
-        return self.balance + self.margin_used + self.unrealized_pnl
-    
-    @property
-    def available_balance(self) -> Decimal:
-        """사용 가능한 잔액"""
-        return self.balance
-    
-    @property
-    def margin_ratio(self) -> Decimal:
-        """증거금 비율 (%) = (사용 증거금 / 총 자산) * 100"""
-        if self.total_balance <= 0:
-            return Decimal("0")
-        return (self.margin_used / self.total_balance) * 100
 
-
-# =====================================================
-# 선물 포지션 모델
-# =====================================================
-
+# Futures Position Model
 class FuturesPosition(SQLModel, table=True):
-    """선물 포지션"""
+    """Futures position model"""
     __tablename__ = "futures_positions"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="포지션 UUID"
-    )
-    account_id: str = Field(foreign_key="futures_accounts.id", index=True)
-    
-    # 기본 정보
-    symbol: str = Field(index=True, max_length=20)
-    side: FuturesPositionSide = Field(index=True, description="LONG or SHORT")
-    status: FuturesPositionStatus = Field(
-        default=FuturesPositionStatus.OPEN,
-        index=True
-    )
-    
-    # 레버리지 및 수량
-    leverage: int = Field(ge=1, le=125, description="레버리지 (1~125x)")
-    quantity: Decimal = Field(
-        max_digits=20,
-        decimal_places=8,
-        description="계약 수량"
-    )
-    
-    # 가격 정보
-    entry_price: Decimal = Field(
-        max_digits=20,
-        decimal_places=8,
-        description="진입 평균가"
-    )
-    mark_price: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="현재 마크 가격 (청산 계산용)"
-    )
-    
-    # 증거금
-    margin: Decimal = Field(
-        max_digits=20,
-        decimal_places=8,
-        description="사용된 증거금"
-    )
-    
-    # 손익
-    unrealized_pnl: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="미실현 손익"
-    )
-    realized_pnl: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="실현 손익 (청산 시)"
-    )
-    
-    # 청산 가격
-    liquidation_price: Decimal = Field(
-        max_digits=20,
-        decimal_places=8,
-        description="청산 가격"
-    )
-    
-    # 수수료
-    fee: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="진입 수수료"
-    )
-    
-    # 손절/익절 설정 (자동 청산)
-    stop_loss_price: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8,
-        description="손절가 (로스컷) - 이 가격 도달 시 자동 청산"
-    )
-    take_profit_price: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8,
-        description="익절가 (베네핏컷) - 이 가격 도달 시 자동 청산"
-    )
-    
-    # 시간
-    opened_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    closed_at: Optional[datetime] = None
-    
-    # Relationships
-    account: Optional[FuturesAccount] = Relationship(back_populates="positions")
-    
-    @property
-    def position_value(self) -> Decimal:
-        """포지션 가치 = 진입가 * 수량"""
-        return self.entry_price * self.quantity
-    
-    @property
-    def roe_percent(self) -> Decimal:
-        """수익률 (ROE %) = (미실현 손익 / 증거금) * 100"""
-        if self.margin <= 0:
-            return Decimal("0")
-        return (self.unrealized_pnl / self.margin) * 100
-    
-    def calculate_pnl(self, current_price: Decimal) -> Decimal:
-        """
-        미실현 손익 계산
-        
-        롱: (현재가 - 진입가) * 수량
-        숏: (진입가 - 현재가) * 수량
-        """
-        if self.side == FuturesPositionSide.LONG:
-            return (current_price - self.entry_price) * self.quantity
-        else:  # SHORT
-            return (self.entry_price - current_price) * self.quantity
-    
-    def calculate_liquidation_price(self) -> Decimal:
-        """
-        청산 가격 계산
-        
-        롱: 진입가 - (증거금 * 0.9 / 수량)
-        숏: 진입가 + (증거금 * 0.9 / 수량)
-        
-        청산 마진: 증거금의 90% (유지 증거금 10%)
-        """
-        liquidation_margin = self.margin * Decimal("0.9")
-        
-        if self.side == FuturesPositionSide.LONG:
-            return self.entry_price - (liquidation_margin / self.quantity)
-        else:  # SHORT
-            return self.entry_price + (liquidation_margin / self.quantity)
-    
-    def should_stop_loss(self, current_price: Decimal) -> bool:
-        """손절 조건 체크"""
-        if not self.stop_loss_price:
-            return False
-        
-        if self.side == FuturesPositionSide.LONG:
-            return current_price <= self.stop_loss_price
-        else:  # SHORT
-            return current_price >= self.stop_loss_price
-    
-    def should_take_profit(self, current_price: Decimal) -> bool:
-        """익절 조건 체크"""
-        if not self.take_profit_price:
-            return False
-        
-        if self.side == FuturesPositionSide.LONG:
-            return current_price >= self.take_profit_price
-        else:  # SHORT
-            return current_price <= self.take_profit_price
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id")
+    symbol: str = Field(index=True)
+    side: FuturesPositionSide
+    quantity: Decimal
+    entry_price: Decimal
+    mark_price: Optional[Decimal] = None
+    liquidation_price: Optional[Decimal] = None
+    leverage: int = Field(default=1)
+    margin: Decimal
+    unrealized_pnl: Decimal = Field(default=0.0)
+    realized_pnl: Decimal = Field(default=0.0)
+    status: FuturesPositionStatus = Field(default=FuturesPositionStatus.OPEN)
+    stop_loss: Optional[Decimal] = None
+    take_profit: Optional[Decimal] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-
-# =====================================================
-# 선물 주문 모델
-# =====================================================
-
+# Futures Order Model  
 class FuturesOrder(SQLModel, table=True):
-    """선물 주문"""
+    """Futures order model"""
     __tablename__ = "futures_orders"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="주문 UUID"
-    )
-    account_id: str = Field(foreign_key="futures_accounts.id", index=True)
-    user_id: str = Field(foreign_key="users.id", index=True)
-    position_id: Optional[str] = Field(
-        default=None,
-        foreign_key="futures_positions.id"
-    )
-    
-    # 주문 정보
-    symbol: str = Field(index=True, max_length=20)
-    side: FuturesPositionSide = Field(description="LONG or SHORT")
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id")
+    position_id: Optional[int] = Field(foreign_key="futures_positions.id")
+    symbol: str = Field(index=True)
     order_type: FuturesOrderType
-    
-    # 수량 및 가격
-    quantity: Decimal = Field(max_digits=20, decimal_places=8)
-    price: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8
-    )
-    leverage: int = Field(ge=1, le=125)
-    
-    # 주문 상태
-    is_close: bool = Field(
-        default=False,
-        description="포지션 청산 주문인지 여부"
-    )
-    is_filled: bool = Field(default=False)
-    
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    filled_at: Optional[datetime] = None
+    side: FuturesPositionSide
+    quantity: Decimal
+    price: Optional[Decimal] = None
+    stop_price: Optional[Decimal] = None
+    leverage: int = Field(default=1)
+    status: str = Field(default="PENDING")
+    executed_quantity: Decimal = Field(default=0.0)
+    executed_price: Optional[Decimal] = None
+    fee: Decimal = Field(default=0.0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-
-# =====================================================
-# 선물 거래 내역 모델
-# =====================================================
-
+# Futures Transaction Model
 class FuturesTransaction(SQLModel, table=True):
-    """선물 거래 내역"""
+    """Futures transaction history"""
     __tablename__ = "futures_transactions"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="거래 UUID"
-    )
-    user_id: str = Field(foreign_key="users.id", index=True)
-    position_id: str = Field(foreign_key="futures_positions.id", index=True)
-    
-    # 거래 정보
-    symbol: str = Field(index=True, max_length=20)
-    side: FuturesPositionSide
-    action: str = Field(
-        max_length=20,
-        description="OPEN(진입), CLOSE(청산), STOP_LOSS(손절), TAKE_PROFIT(익절)"
-    )
-    
-    # 수량 및 가격
-    quantity: Decimal = Field(max_digits=20, decimal_places=8)
-    price: Decimal = Field(max_digits=20, decimal_places=8)
-    leverage: int
-    
-    # 손익
-    pnl: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="실현 손익 (청산 시에만)"
-    )
-    fee: Decimal = Field(max_digits=20, decimal_places=8)
-    
-    timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id")
+    order_id: Optional[int] = Field(foreign_key="futures_orders.id")
+    transaction_type: str  # OPEN_POSITION, CLOSE_POSITION, LIQUIDATION, FEE, FUNDING
+    amount: Decimal
+    balance_after: Decimal
+    description: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -1,305 +1,152 @@
 ﻿# app/models/database.py
 """
-데이터베이스 모델 정의 - UUID 보안 적용 버전
+Database models for BeenCoin API
 """
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import Field, SQLModel, Relationship
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-import uuid
+from pydantic import field_serializer
 
-
-# =====================================================
 # Enums
-# =====================================================
+class OrderType(str, Enum):
+    MARKET = "MARKET"
+    LIMIT = "LIMIT"
+    STOP_LOSS = "STOP_LOSS"
+    TAKE_PROFIT = "TAKE_PROFIT"
 
 class OrderSide(str, Enum):
-    """주문 방향"""
     BUY = "BUY"
     SELL = "SELL"
 
-
-class OrderType(str, Enum):
-    """주문 타입"""
-    MARKET = "MARKET"  # 시장가
-    LIMIT = "LIMIT"    # 지정가
-    STOP_LOSS = "STOP_LOSS"  # 손절 (로스컷)
-    TAKE_PROFIT = "TAKE_PROFIT"  # 익절 (베네핏컷)
-
-
 class OrderStatus(str, Enum):
-    """주문 상태"""
-    PENDING = "PENDING"      # 대기 중
-    FILLED = "FILLED"        # 체결 완료
-    PARTIALLY_FILLED = "PARTIALLY_FILLED"  # 부분 체결
-    CANCELLED = "CANCELLED"  # 취소됨
-    REJECTED = "REJECTED"    # 거부됨
+    PENDING = "PENDING"
+    FILLED = "FILLED"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
 
+class PositionStatus(str, Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
 
-# =====================================================
-# 사용자 모델
-# =====================================================
-
+# User Model
 class User(SQLModel, table=True):
-    """사용자"""
+    """User model"""
     __tablename__ = "users"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True
-    )
-    username: str = Field(unique=True, index=True, max_length=50)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(unique=True, index=True)
+    email: str = Field(unique=True, index=True)
     hashed_password: str
     is_active: bool = Field(default=True)
+    is_admin: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     
     # Relationships
     trading_account: Optional["TradingAccount"] = Relationship(back_populates="user")
     orders: List["Order"] = Relationship(back_populates="user")
-    transactions: List["Transaction"] = Relationship(back_populates="user")
+    positions: List["Position"] = Relationship(back_populates="user")
 
-
-# =====================================================
-# 거래 계정 모델
-# =====================================================
-
+# Trading Account Model
 class TradingAccount(SQLModel, table=True):
-    """
-    거래 계정 - locked_balance 추가
-    """
+    """Trading account model"""
     __tablename__ = "trading_accounts"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="계정 UUID"
-    )
-    user_id: str = Field(foreign_key="users.id", index=True, unique=True)
-    
-    # 잔액 정보
-    balance: Decimal = Field(
-        default=Decimal("100000"),
-        max_digits=20,
-        decimal_places=8,
-        description="사용 가능한 잔액"
-    )
-    locked_balance: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
-        description="주문에 걸려있는 금액 (미체결 주문)"
-    )
-    
-    # 수익 정보
-    total_profit: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
-    )
-    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", unique=True)
+    balance: Decimal = Field(default=100000.0)  # Starting balance
+    locked_balance: Decimal = Field(default=0.0)
+    total_profit: Decimal = Field(default=0.0)
+    total_volume: Decimal = Field(default=0.0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
     # Relationships
-    user: Optional[User] = Relationship(back_populates="trading_account")
-    positions: List["Position"] = Relationship(back_populates="account")
+    user: User = Relationship(back_populates="trading_account")
     
-    @property
-    def total_balance(self) -> Decimal:
-        """총 잔액 = 사용가능 + 락"""
-        return self.balance + self.locked_balance
-    
-    @property
-    def available_balance(self) -> Decimal:
-        """구매 가능 금액 (balance와 동일하지만 명시적)"""
-        return self.balance
+    @field_serializer('balance', 'locked_balance', 'total_profit', 'total_volume')
+    def serialize_decimal(self, value: Decimal) -> str:
+        """Serialize Decimal fields"""
+        if value is None:
+            return None
+        return f"{value:.8f}".rstrip('0').rstrip('.')
 
-
-# =====================================================
-# 주문 모델
-# =====================================================
-
+# Order Model
 class Order(SQLModel, table=True):
-    """주문"""
+    """Order model"""
     __tablename__ = "orders"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="주문 UUID"
-    )
-    account_id: str = Field(foreign_key="trading_accounts.id", index=True)
-    user_id: str = Field(foreign_key="users.id", index=True)
-    
-    # 주문 정보
-    symbol: str = Field(index=True, max_length=20)
-    side: OrderSide = Field(index=True)
-    order_type: OrderType = Field(index=True)
-    order_status: OrderStatus = Field(default=OrderStatus.PENDING, index=True)
-    
-    # 가격/수량
-    price: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8,
-        description="지정가 (시장가는 None)"
-    )
-    quantity: Decimal = Field(max_digits=20, decimal_places=8)
-    filled_quantity: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
-    )
-    average_price: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8
-    )
-    
-    # 수수료
-    fee: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8
-    )
-    
-    # 손절/익절 가격 (로스컷/베네핏컷)
-    stop_price: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8,
-        description="손절(STOP_LOSS) 또는 익절(TAKE_PROFIT) 트리거 가격"
-    )
-    
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id")
+    symbol: str = Field(index=True)
+    order_type: OrderType
+    order_side: OrderSide
+    order_status: OrderStatus = Field(default=OrderStatus.PENDING)
+    quantity: Decimal
+    price: Optional[Decimal] = None
+    stop_price: Optional[Decimal] = None
+    executed_quantity: Decimal = Field(default=0.0)
+    executed_price: Optional[Decimal] = None
+    fee: Decimal = Field(default=0.0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
     # Relationships
-    user: Optional[User] = Relationship(back_populates="orders")
-    transactions: List["Transaction"] = Relationship(back_populates="order")
+    user: User = Relationship(back_populates="orders")
+    
+    @field_serializer('quantity', 'price', 'stop_price', 'executed_quantity', 'executed_price', 'fee')
+    def serialize_decimal(self, value: Decimal) -> str:
+        """Serialize Decimal fields"""
+        if value is None:
+            return None
+        return f"{value:.8f}".rstrip('0').rstrip('.')
 
-
-# =====================================================
-# 포지션 모델
-# =====================================================
-
+# Position Model
 class Position(SQLModel, table=True):
-    """포지션 (보유 자산)"""
+    """Position model"""
     __tablename__ = "positions"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="포지션 UUID"
-    )
-    account_id: str = Field(foreign_key="trading_accounts.id", index=True)
-    symbol: str = Field(index=True, max_length=20)
-    
-    # 수량/가격
-    quantity: Decimal = Field(max_digits=20, decimal_places=8)
-    average_price: Decimal = Field(max_digits=20, decimal_places=8)
-    current_price: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
-    )
-    
-    # 평가 정보
-    current_value: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
-    )
-    unrealized_profit: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
-    )
-    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id")
+    symbol: str = Field(index=True)
+    quantity: Decimal
+    average_price: Decimal
+    current_price: Optional[Decimal] = None
+    unrealized_pnl: Decimal = Field(default=0.0)
+    realized_pnl: Decimal = Field(default=0.0)
+    position_status: PositionStatus = Field(default=PositionStatus.OPEN)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
     # Relationships
-    account: Optional[TradingAccount] = Relationship(back_populates="positions")
-    
-    @property
-    def profit_percent(self) -> Decimal:
-        """수익률 (%)"""
-        if self.average_price == 0:
-            return Decimal("0")
-        return ((self.current_price - self.average_price) / self.average_price) * 100
+    user: User = Relationship(back_populates="positions")
 
-
-# =====================================================
-# 거래 내역 모델
-# =====================================================
-
+# Transaction Model
 class Transaction(SQLModel, table=True):
-    """거래 내역"""
+    """Transaction history model"""
     __tablename__ = "transactions"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="거래 UUID"
-    )
-    user_id: str = Field(foreign_key="users.id", index=True)
-    order_id: str = Field(foreign_key="orders.id", index=True)
-    
-    # 거래 정보
-    symbol: str = Field(index=True, max_length=20)
-    side: OrderSide
-    quantity: Decimal = Field(max_digits=20, decimal_places=8)
-    price: Decimal = Field(max_digits=20, decimal_places=8)
-    fee: Decimal = Field(max_digits=20, decimal_places=8)
-    
-    # 실현 손익 (매도 시에만)
-    realized_profit: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8
-    )
-    
-    timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
-    
-    # Relationships
-    user: Optional[User] = Relationship(back_populates="transactions")
-    order: Optional[Order] = Relationship(back_populates="transactions")
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id")
+    order_id: Optional[int] = Field(foreign_key="orders.id")
+    transaction_type: str  # DEPOSIT, WITHDRAWAL, TRADE_BUY, TRADE_SELL, FEE
+    amount: Decimal
+    balance_after: Decimal
+    description: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-
-# =====================================================
-# 가격 알림 모델
-# =====================================================
-
+# Price Alert Model
 class PriceAlert(SQLModel, table=True):
-    """가격 알림"""
+    """Price alert model"""
     __tablename__ = "price_alerts"
     
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-        index=True,
-        description="알림 UUID"
-    )
-    user_id: str = Field(foreign_key="users.id", index=True)
-    symbol: str = Field(index=True, max_length=20)
-    
-    # 알림 조건
-    target_price: Decimal = Field(max_digits=20, decimal_places=8)
-    condition: str = Field(
-        max_length=10,
-        description="ABOVE(이상) 또는 BELOW(이하)"
-    )
-    
-    # 상태
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id")
+    symbol: str
+    target_price: Decimal
+    condition: str  # ABOVE, BELOW
     is_active: bool = Field(default=True)
-    is_triggered: bool = Field(default=False)
-    
-    created_at: datetime = Field(default_factory=datetime.utcnow)
     triggered_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)

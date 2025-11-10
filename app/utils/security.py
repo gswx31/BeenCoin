@@ -1,4 +1,7 @@
 # app/utils/security.py
+"""
+Security utilities for authentication and authorization
+"""
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
@@ -10,42 +13,34 @@ from sqlmodel import Session, select
 from app.core.database import get_session
 from app.models.database import User
 
-# 비밀번호 해싱 (Argon2로 교체: 길이 제한 없고 더 안전)
-# schemes: argon2 우선, bcrypt fallback (기존 사용자 호환)
+# Password hashing - Use argon2 instead of bcrypt
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 
-# HTTP Bearer 토큰 스킴
+# HTTP Bearer token scheme
 security = HTTPBearer()
 
 def hash_password(password: str) -> str:
-    """
-    비밀번호 해싱
-    Argon2 사용: 입력 길이 제한 없음 (보안상 validator에서 char 제한 추천)
-    """
+    """Hash a password"""
     return pwd_context.hash(password)
 
-# ⭐ 별칭 함수 추가 (하위 호환성)
 def get_password_hash(password: str) -> str:
-    """
-    비밀번호 해싱 (hash_password의 별칭)
-    하위 호환성을 위해 추가
-    """
+    """Alias for hash_password for backward compatibility"""
     return hash_password(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """비밀번호 검증"""
+    """Verify a password against its hash"""
     return pwd_context.verify(plain_password, hashed_password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """
-    JWT 액세스 토큰 생성
+    Create a JWT access token
     
     Args:
-        data: 토큰에 포함할 데이터 (보통 {"sub": username})
-        expires_delta: 만료 시간 (기본값: 24시간)
+        data: Data to encode in the token
+        expires_delta: Token expiration time
     
     Returns:
-        JWT 토큰 문자열
+        str: JWT token
     """
     to_encode = data.copy()
     
@@ -56,7 +51,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     
     to_encode.update({
         "exp": expire,
-        "iat": datetime.utcnow(),  # 발급 시간
+        "iat": datetime.utcnow(),
         "type": "access"
     })
     
@@ -65,16 +60,16 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 def decode_access_token(token: str) -> dict:
     """
-    JWT 토큰 디코딩 및 검증
+    Decode and verify a JWT token
     
     Args:
-        token: JWT 토큰 문자열
+        token: JWT token string
     
     Returns:
-        디코딩된 페이로드
+        dict: Decoded payload
     
     Raises:
-        HTTPException: 토큰이 유효하지 않을 경우
+        HTTPException: If token is invalid or expired
     """
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
@@ -82,13 +77,13 @@ def decode_access_token(token: str) -> dict:
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="토큰이 만료되었습니다.",
+            detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except JWTError as e:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="유효하지 않은 토큰입니다.",
+            detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -97,52 +92,62 @@ def get_current_user(
     session: Session = Depends(get_session)
 ) -> User:
     """
-    현재 로그인한 사용자 조회 (의존성)
+    Get the current authenticated user
     
-    사용법:
-        @router.get("/protected")
-        def protected_route(current_user: User = Depends(get_current_user)):
-            return {"user": current_user.username}
+    Args:
+        credentials: HTTP Bearer credentials
+        session: Database session
+    
+    Returns:
+        User: Current user object
+    
+    Raises:
+        HTTPException: If authentication fails
     """
     token = credentials.credentials
     
-    # 토큰 디코딩
+    # Decode token
     payload = decode_access_token(token)
     
-    # username 추출
+    # Extract username
     username: str = payload.get("sub")
     if username is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="유효하지 않은 인증 정보입니다.",
+            detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # 사용자 조회
+    # Get user from database
     user = session.exec(select(User).where(User.username == username)).first()
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="사용자를 찾을 수 없습니다.",
+            detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # 비활성화된 사용자 체크
+    # Check if user is active
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="비활성화된 계정입니다."
+            detail="Inactive user account"
         )
     
     return user
 
 def create_refresh_token(data: dict) -> str:
     """
-    리프레시 토큰 생성 (선택사항)
-    액세스 토큰보다 긴 유효기간을 가짐
+    Create a refresh token (optional)
+    
+    Args:
+        data: Data to encode in the token
+    
+    Returns:
+        str: Refresh token
     """
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=7)  # 7일
+    expire = datetime.utcnow() + timedelta(days=7)  # 7 days validity
     
     to_encode.update({
         "exp": expire,

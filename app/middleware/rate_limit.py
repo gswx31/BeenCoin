@@ -1,152 +1,185 @@
 # app/middleware/rate_limit.py
 """
-Rate Limiting 미들웨어
-- IP별 요청 제한
-- DDoS 공격 방어
-- 유연한 설정
+Rate limiting middleware
 """
-
-from fastapi import Request, HTTPException, status
+from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from typing import Dict, Tuple
+import time
+import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Dict, List
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Rate Limiting 미들웨어"""
+class RateLimiter:
+    """Rate limiter implementation"""
     
     def __init__(
         self,
-        app,
-        max_requests: int = 100,
-        window_seconds: int = 60,
-        exclude_paths: List[str] = None
+        requests_per_minute: int = 60,
+        requests_per_hour: int = 1000,
+        cleanup_interval: int = 300  # 5 minutes
     ):
-        super().__init__(app)
-        self.max_requests = max_requests
-        self.window = timedelta(seconds=window_seconds)
-        self.requests: Dict[str, List[datetime]] = defaultdict(list)
-        self.exclude_paths = exclude_paths or ["/health", "/docs", "/redoc", "/openapi.json"]
+        self.requests_per_minute = requests_per_minute
+        self.requests_per_hour = requests_per_hour
+        self.cleanup_interval = cleanup_interval
+        
+        # Storage for request counts
+        self.minute_counts: Dict[str, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        self.hour_counts: Dict[str, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        
+        # Cleanup task will be started when needed
+        self._cleanup_task = None
     
-    async def dispatch(self, request: Request, call_next):
-        # 제외 경로 확인
-        if any(request.url.path.startswith(path) for path in self.exclude_paths):
-            return await call_next(request)
-        
-        # 클라이언트 IP
-        client_ip = request.client.host
-        now = datetime.now()
-        
-        # 오래된 요청 제거
-        self.requests[client_ip] = [
-            req_time for req_time in self.requests[client_ip]
-            if now - req_time < self.window
-        ]
-        
-        # Rate Limit 확인
-        if len(self.requests[client_ip]) >= self.max_requests:
-            logger.warning(f"🚫 Rate limit exceeded: {client_ip}")
-            return JSONResponse(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={
-                    "detail": "Too many requests. Please try again later.",
-                    "retry_after": self.window.seconds
-                },
-                headers={
-                    "Retry-After": str(self.window.seconds)
-                }
-            )
-        
-        # 요청 기록
-        self.requests[client_ip].append(now)
-        
-        # 응답 헤더에 Rate Limit 정보 추가
-        response = await call_next(request)
-        response.headers["X-RateLimit-Limit"] = str(self.max_requests)
-        response.headers["X-RateLimit-Remaining"] = str(
-            self.max_requests - len(self.requests[client_ip])
-        )
-        response.headers["X-RateLimit-Reset"] = str(
-            int((now + self.window).timestamp())
-        )
-        
-        return response
-
-
-class APIKeyRateLimiter:
-    """
-    API Key별 Rate Limiting (더 정교한 제어)
-    """
+    def _ensure_cleanup_task(self):
+        """Ensure cleanup task is running"""
+        if self._cleanup_task is None:
+            try:
+                loop = asyncio.get_running_loop()
+                self._cleanup_task = loop.create_task(self._cleanup_old_entries())
+            except RuntimeError:
+                # No event loop running yet
+                pass
     
-    def __init__(self):
-        self.requests: Dict[str, List[datetime]] = defaultdict(list)
-        self.limits = {
-            "free": (100, 60),      # 100 req/min
-            "premium": (1000, 60),  # 1000 req/min
-            "enterprise": (10000, 60)  # 10000 req/min
-        }
+    def _get_time_windows(self) -> Tuple[int, int]:
+        """Get current minute and hour windows"""
+        now = time.time()
+        minute_window = int(now // 60)
+        hour_window = int(now // 3600)
+        return minute_window, hour_window
     
-    async def check_limit(self, api_key: str, tier: str = "free") -> bool:
-        """API Key Rate Limit 확인"""
-        max_requests, window_seconds = self.limits.get(tier, self.limits["free"])
-        window = timedelta(seconds=window_seconds)
-        now = datetime.now()
+    def check_rate_limit(self, client_id: str) -> bool:
+        """
+        Check if request is within rate limits
         
-        # 오래된 요청 제거
-        self.requests[api_key] = [
-            req_time for req_time in self.requests[api_key]
-            if now - req_time < window
-        ]
+        Args:
+            client_id: Client identifier (IP or user ID)
         
-        # Limit 확인
-        if len(self.requests[api_key]) >= max_requests:
+        Returns:
+            bool: True if within limits, False otherwise
+        """
+        self._ensure_cleanup_task()  # Ensure cleanup is running
+        
+        minute_window, hour_window = self._get_time_windows()
+        
+        # Check minute limit
+        minute_count = self.minute_counts[client_id][minute_window]
+        if minute_count >= self.requests_per_minute:
+            logger.warning(f"Rate limit exceeded for {client_id}: {minute_count}/min")
             return False
         
-        # 요청 기록
-        self.requests[api_key].append(now)
+        # Check hour limit
+        hour_count = self.hour_counts[client_id][hour_window]
+        if hour_count >= self.requests_per_hour:
+            logger.warning(f"Rate limit exceeded for {client_id}: {hour_count}/hour")
+            return False
+        
+        # Increment counts
+        self.minute_counts[client_id][minute_window] += 1
+        self.hour_counts[client_id][hour_window] += 1
+        
         return True
     
-    def get_remaining(self, api_key: str, tier: str = "free") -> int:
-        """남은 요청 수"""
-        max_requests, _ = self.limits.get(tier, self.limits["free"])
-        return max_requests - len(self.requests[api_key])
-    
-    async def cleanup_old_entries(self):
-        """
-        주기적으로 오래된 요청 기록 정리
-        메모리 누수 방지
-        """
-        import asyncio
+    def get_remaining_requests(self, client_id: str) -> Dict[str, int]:
+        """Get remaining requests for client"""
+        minute_window, hour_window = self._get_time_windows()
         
+        minute_count = self.minute_counts[client_id][minute_window]
+        hour_count = self.hour_counts[client_id][hour_window]
+        
+        return {
+            "minute": max(0, self.requests_per_minute - minute_count),
+            "hour": max(0, self.requests_per_hour - hour_count)
+        }
+    
+    async def _cleanup_old_entries(self):
+        """Clean up old entries periodically"""
         while True:
-            try:
-                await asyncio.sleep(300)  # 5분마다 실행
-                now = datetime.now()
-                
-                # 모든 API Key에 대해 오래된 요청 제거
-                for api_key in list(self.requests.keys()):
-                    # 가장 긴 window (enterprise: 60초)
-                    window = timedelta(seconds=60)
-                    self.requests[api_key] = [
-                        req_time for req_time in self.requests[api_key]
-                        if now - req_time < window
-                    ]
-                    
-                    # 빈 리스트면 삭제
-                    if not self.requests[api_key]:
-                        del self.requests[api_key]
-                
-                logger.debug(f"🧹 Rate limiter cleanup: {len(self.requests)} active keys")
+            await asyncio.sleep(self.cleanup_interval)
             
+            try:
+                current_minute, current_hour = self._get_time_windows()
+                
+                # Clean minute counts (keep last 2 minutes)
+                for client_id in list(self.minute_counts.keys()):
+                    old_windows = [
+                        w for w in self.minute_counts[client_id]
+                        if w < current_minute - 1
+                    ]
+                    for window in old_windows:
+                        del self.minute_counts[client_id][window]
+                    
+                    if not self.minute_counts[client_id]:
+                        del self.minute_counts[client_id]
+                
+                # Clean hour counts (keep last 2 hours)
+                for client_id in list(self.hour_counts.keys()):
+                    old_windows = [
+                        w for w in self.hour_counts[client_id]
+                        if w < current_hour - 1
+                    ]
+                    for window in old_windows:
+                        del self.hour_counts[client_id][window]
+                    
+                    if not self.hour_counts[client_id]:
+                        del self.hour_counts[client_id]
+                
+                logger.debug(f"Cleaned up rate limit entries. Active clients: {len(self.minute_counts)}")
+                
             except Exception as e:
-                logger.error(f"❌ Rate limiter cleanup error: {e}")
-                await asyncio.sleep(60)  # 에러 시 1분 후 재시도
+                logger.error(f"Error in rate limit cleanup: {e}")
 
 
-# 싱글톤 인스턴스
-rate_limiter = APIKeyRateLimiter()
+# Global rate limiter instance
+rate_limiter = RateLimiter()
+
+
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    Rate limiting middleware
+    
+    Args:
+        request: FastAPI request
+        call_next: Next middleware/handler
+    
+    Returns:
+        Response or rate limit error
+    """
+    # Skip rate limiting for certain paths
+    skip_paths = ["/docs", "/redoc", "/openapi.json", "/health"]
+    if request.url.path in skip_paths:
+        return await call_next(request)
+    
+    # Get client identifier (IP address or user ID)
+    client_id = request.client.host if request.client else "unknown"
+    
+    # Check rate limit
+    if not rate_limiter.check_rate_limit(client_id):
+        remaining = rate_limiter.get_remaining_requests(client_id)
+        
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "error": "Rate limit exceeded",
+                "message": "Too many requests. Please slow down.",
+                "remaining": remaining
+            },
+            headers={
+                "X-RateLimit-Remaining-Minute": str(remaining["minute"]),
+                "X-RateLimit-Remaining-Hour": str(remaining["hour"]),
+                "Retry-After": "60"
+            }
+        )
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Add rate limit headers
+    remaining = rate_limiter.get_remaining_requests(client_id)
+    response.headers["X-RateLimit-Remaining-Minute"] = str(remaining["minute"])
+    response.headers["X-RateLimit-Remaining-Hour"] = str(remaining["hour"])
+    
+    return response
