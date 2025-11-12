@@ -1,0 +1,51 @@
+# =============================================================================
+# 테스트 의존성 (requirements-test.txt)
+# =============================================================================
+
+# 기본 테스트 프레임워크
+pytest==8.0.0
+pytest-asyncio==0.23.0
+pytest-cov==4.1.0
+
+# 테스트 유틸리티
+pytest-xdist==3.5.0          # 병렬 실행
+pytest-html==4.1.1           # HTML 리포트
+pytest-mock==3.12.0          # Mock 헬퍼
+pytest-timeout==2.2.0        # 타임아웃 설정
+pytest-freezegun==0.4.2      # 시간 고정
+
+# 테스트 데이터 생성
+faker==22.0.0                # 가짜 데이터 생성
+factory-boy==3.3.0           # Factory 패턴
+
+# 코드 품질 도구
+black==24.1.1                # 코드 포매팅
+ruff==0.1.15                 # 린터 (Flake8 + 기타)
+mypy==1.8.0                  # 타입 체킹
+isort==5.13.2                # Import 정리
+
+# 보안 검사
+safety==3.0.1                # 의존성 보안 검사
+bandit==1.7.6                # 코드 보안 검사
+
+# 커버리지 확장
+coverage[toml]==7.4.0        # 커버리지 측정
+pytest-clarity==1.0.1        # 더 나은 assert 출력
+
+# HTTP 테스트
+httpx==0.26.0                # 비동기 HTTP 클라이언트
+responses==0.24.1            # HTTP Mock
+
+# 추가 유틸리티
+pytest-sugar==0.9.7          # 예쁜 출력
+pytest-instafail==0.5.0      # 실패 즉시 출력
+pytest-benchmark==4.0.0      # 벤치마크
+# 추가 필요 패키지
+pydantic>=2.0.0
+fastapi>=0.100.0
+uvicorn>=0.20.0
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+python-multipart>=0.0.6
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4

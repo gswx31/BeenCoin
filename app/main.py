@@ -1,6 +1,23 @@
+# app/main.py
+"""
+BeenCoin API - Main Application
+"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+import logging
+import sys
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
 from app.core.config import settings
 from app.models.database import create_db_and_tables
 from app.routers import auth, orders, account, websocket
@@ -9,7 +26,10 @@ from app.background_tasks.tasks import update_all_positions
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    version=settings.VERSION,
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 app.add_middleware(
@@ -39,7 +59,11 @@ async def startup_event():
 
 @app.get("/")
 async def root():
-    return {"message": "BeenCoin API 서버가 실행 중입니다!"}
+    return {
+        "name": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "status": "running"
+    }
 
 @app.get("/health")
 async def health_check():
@@ -47,4 +71,11 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    uvicorn.run(
+        "app.main:app",
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        reload=True,
+        log_level=settings.LOG_LEVEL.lower()
+    )

@@ -1,21 +1,28 @@
+# Core
 fastapi==0.104.1
-uvicorn==0.24.0
+uvicorn[standard]==0.24.0
+python-dotenv==1.0.0
+
+# Database
+sqlmodel==0.0.14
 sqlalchemy==2.0.23
-sqlmodel==0.0.11
-pydantic==2.5.0
-python-jose==3.3.0
-passlib==1.7.4
-bcrypt==4.0.1
+
+# Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
+bcrypt==4.0.1
+
+# HTTP
 httpx==0.25.2
-websockets==12.0
-redis==5.0.1
-aioredis==2.0.1
+
+# Settings  
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Utilities
+python-dateutil==2.8.2
+
+# Testing (optional)
 pytest==7.4.3
 pytest-asyncio==0.21.1
-aiohttp==3.9.1
-celery==5.3.4
-python-binance==1.0.19
-python-dotenv==1.0.0
-flower==2.0.1
-faker==19.13.0
