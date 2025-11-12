@@ -22,15 +22,5 @@ target/
 .python-version
 .env
 celerybeat-schedule
-/node_modules
-/node_modules/
-client/node_modules/
-logs/
-*.log
-.env.production
-.env.local
-.vscode/
-.idea/
-# 테스트 관련 (추가)
-tests/logs/
-tests/reports/
+client/node_modules
+client/build
