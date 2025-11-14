@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # Backend Service
+  # ============================================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: beencoin-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./beencoin.db
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=1440
+      - INITIAL_BALANCE=1000000
+      - LOG_LEVEL=INFO
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:80
+    volumes:
+      - backend-data:/app/beencoin.db
+      - backend-logs:/app/logs
+    networks:
+      - beencoin-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================
+  # Frontend Service
+  # ============================================
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: beencoin-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - REACT_APP_API_URL=http://backend:8000
+      - REACT_APP_WS_URL=ws://backend:8000
+    networks:
+      - beencoin-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  backend-data:
+    driver: local
+  backend-logs:
+    driver: local
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  beencoin-network:
+    driver: bridge

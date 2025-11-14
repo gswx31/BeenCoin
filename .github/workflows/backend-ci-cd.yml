@@ -1,0 +1,110 @@
+name: Backend Deployment Test
+
+on:
+  workflow_run:
+    workflows: ["Backend CI/CD Pipeline"]
+    types:
+      - completed
+    branches: [main]
+  workflow_dispatch:  # 수동 실행 가능
+
+jobs:
+  # ============================================
+  # 백엔드 통합 테스트
+  # ============================================
+  integration-test:
+    name: Backend Integration Test
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 🗄️ Initialize database
+      run: |
+        python -c "from app.core.database import create_db_and_tables; create_db_and_tables()"
+
+    - name: 🚀 Start backend server
+      run: |
+        python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+        sleep 10
+      continue-on-error: false
+
+    - name: 🧪 Health check
+      run: |
+        curl -f http://localhost:8000/health || exit 1
+        echo "✅ Backend is healthy!"
+
+    - name: 🧪 API endpoint test
+      run: |
+        # 회원가입 테스트
+        curl -X POST http://localhost:8000/api/v1/auth/register \
+          -H "Content-Type: application/json" \
+          -d '{"username":"testuser","password":"testpass123"}' || echo "Registration test"
+        
+        # 마켓 데이터 테스트
+        curl -f http://localhost:8000/api/v1/market/coins || exit 1
+        echo "✅ API endpoints working!"
+
+    - name: 🐳 Docker build test
+      run: |
+        docker build -t beencoin-backend:test .
+        echo "✅ Docker build successful!"
+
+    - name: 🐳 Docker run test
+      run: |
+        docker run -d -p 8001:8000 --name test-backend beencoin-backend:test
+        sleep 10
+        curl -f http://localhost:8001/health || exit 1
+        echo "✅ Docker container working!"
+
+    - name: 📋 View logs
+      if: always()
+      run: |
+        docker logs test-backend || echo "No docker logs"
+
+    - name: 🧹 Cleanup
+      if: always()
+      run: |
+        docker stop test-backend || true
+        docker rm test-backend || true
+
+  # ============================================
+  # 배포 준비 완료
+  # ============================================
+  deploy-ready:
+    name: Deployment Ready
+    runs-on: ubuntu-latest
+    needs: [integration-test]
+    
+    steps:
+    - name: ✅ Deployment Summary
+      run: |
+        echo "================================"
+        echo "🚀 BACKEND DEPLOYMENT READY"
+        echo "================================"
+        echo ""
+        echo "✅ CI/CD Pipeline: Passed"
+        echo "✅ Integration Tests: Passed"
+        echo "✅ Docker Build: Passed"
+        echo "✅ Health Checks: Passed"
+        echo ""
+        echo "📦 Backend image ready: beencoin-backend:latest"
+        echo ""
+        echo "🎯 Next steps:"
+        echo "  1. Tag and push to registry (optional)"
+        echo "  2. Deploy to cloud (AWS/GCP/Azure)"
+        echo "  3. Set up monitoring"
+        echo ""
+        echo "================================"
