@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
+![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)
 ![React](https://img.shields.io/badge/React-18.2+-61DAFB.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
@@ -83,7 +83,7 @@ BeenCoin은 실제 Binance API를 활용한 암호화폐 모의투자 플랫폼�
 
 ### 필수 요구사항
 
-- Python 3.9+
+- Python 3.10+
 - Node.js 16+
 - npm 또는 yarn
 
@@ -451,7 +451,7 @@ curl http://localhost:8000/health
 
 ```dockerfile
 # Dockerfile
-FROM python:3.9-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
