@@ -37,9 +37,22 @@ jobs:
 
     - name: 🚀 Start backend server
       run: |
-        python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-        sleep 10
-      continue-on-error: false
+        # 로그 파일로 출력하면서 백그라운드 실행
+        nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > server.log 2>&1 &
+        echo $! > server.pid
+        
+        # 서버 시작 대기 (최대 30초)
+        for i in {1..30}; do
+          if curl -f http://localhost:8000/health 2>/dev/null; then
+            echo "✅ Server started successfully!"
+            break
+          fi
+          echo "Waiting for server... ($i/30)"
+          sleep 1
+        done
+        
+        # 로그 확인
+        cat server.log
 
     - name: 🧪 Health check
       run: |
