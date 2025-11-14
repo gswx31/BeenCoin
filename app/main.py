@@ -1,19 +1,22 @@
 # app/main.py
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+"""
+FastAPI 메인 애플리케이션 - 선물 포트폴리오 추가
+"""
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import create_db_and_tables
 
-# ⭐ 선물 거래만 import
-from app.routers import auth, market, futures
+# ⭐ 라우터 import (선물 포트폴리오 추가)
+from app.routers import (
+    auth,
+    market,
+    futures,
+    futures_portfolio  # ⭐ NEW!
+)
 
-from app.services.binance_service import get_multiple_prices
-from app.cache.cache_manager import cache_manager
-import asyncio
+from app.tasks.scheduler import start_all_background_tasks
 import logging
-from datetime import datetime, timezone
-from app.middleware.rate_limit import RateLimitMiddleware
-from app.cache.redis_cache import redis_cache
 
 # 로깅 설정
 logging.basicConfig(
@@ -26,13 +29,10 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="암호화폐 선물 거래 플랫폼",
+    description="암호화폐 선물 거래 플랫폼 (포트폴리오 포함)",
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
-# 미들웨어 등록
-app.add_middleware(RateLimitMiddleware)
 
 # CORS 설정
 app.add_middleware(
@@ -43,197 +43,84 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# WebSocket 연결 관리자
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
+# ⭐ 라우터 등록 (선물 포트폴리오 추가)
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(market.router, prefix="/api/v1")
+app.include_router(futures.router, prefix="/api/v1")
+app.include_router(futures_portfolio.router, prefix="/api/v1")  # ⭐ NEW!
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"✅ WebSocket connected. Total: {len(self.active_connections)}")
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-        logger.info(f"❌ WebSocket disconnected. Total: {len(self.active_connections)}")
-
-    async def broadcast(self, message: dict):
-        """모든 연결된 클라이언트에 메시지 전송"""
-        dead_connections = []
-        
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception as e:
-                logger.warning(f"⚠️ WebSocket send failed: {e}")
-                dead_connections.append(connection)
-        
-        # 죽은 연결 제거
-        for conn in dead_connections:
-            self.disconnect(conn)
-    
-    async def disconnect_all(self):
-        """모든 WebSocket 연결 종료"""
-        for connection in self.active_connections.copy():
-            try:
-                await connection.close()
-            except:
-                pass
-        self.active_connections.clear()
-
-manager = ConnectionManager()
+logger.info("✅ 라우터 등록 완료:")
+logger.info("   - /api/v1/auth (인증)")
+logger.info("   - /api/v1/market (시장 데이터)")
+logger.info("   - /api/v1/futures (선물 거래)")
+logger.info("   - /api/v1/futures/portfolio (선물 포트폴리오) ⭐")
 
 
+# 시작 이벤트
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 실행"""
-    logger.info("=" * 60)
-    logger.info(f"🚀 Starting {settings.PROJECT_NAME} v{settings.VERSION}")
-    logger.info("=" * 60)
+    logger.info("🚀 서버 시작")
     
-    # Redis 연결
-    try:
-        await redis_cache.connect()
-        logger.info("✅ Redis connected")
-    except Exception as e:
-        logger.warning(f"⚠️ Redis connection failed (cache disabled): {e}")
+    # 1. 데이터베이스 초기화
+    create_db_and_tables()
+    logger.info("✅ 데이터베이스 초기화 완료")
     
-    # 데이터베이스 초기화
-    try:
-        create_db_and_tables()
-        logger.info("✅ Database initialized")
-    except Exception as e:
-        logger.error(f"❌ Database initialization failed: {e}")
-        raise
+    # 2. 백그라운드 작업 시작
+    start_all_background_tasks()
+    logger.info("✅ 백그라운드 작업 시작")
     
-    # 캐시 시스템 확인
-    try:
-        cache_manager.get_stats()
-        logger.info("✅ Cache system verified")
-    except Exception as e:
-        logger.warning(f"⚠️ Cache system issue: {e}")
-    
-    logger.info(f"💾 Cache TTL: {settings.CACHE_TTL}s")
-    logger.info(f"📊 Supported symbols: {', '.join(settings.SUPPORTED_SYMBOLS)}")
-    logger.info(f"💰 Initial balance: ${settings.INITIAL_BALANCE:,.2f}")
-    logger.info("=" * 60)
-    logger.info("✅ Server ready!")
-    logger.info(f"📚 API Docs: http://{settings.API_HOST}:{settings.API_PORT}/docs")
-    logger.info("=" * 60)
+    logger.info("✅ 서버 시작 완료")
+    logger.info(f"📡 Docs: http://localhost:8000/docs")
 
 
+# 종료 이벤트
 @app.on_event("shutdown")
 async def shutdown_event():
     """서버 종료 시 실행"""
-    logger.info("🛑 Shutting down...")
-    
-    # WebSocket 연결 정리
-    logger.info(f"🔌 Closing {len(manager.active_connections)} WebSocket connections...")
-    await manager.disconnect_all()
-    
-    # 캐시 정리
-    try:
-        stats = cache_manager.get_stats()
-        logger.info(f"💾 Cache stats: {stats}")
-        cache_manager.clear()
-    except Exception as e:
-        logger.error(f"❌ Cache cleanup error: {e}")
-    
-    # Redis 연결 종료
-    try:
-        await redis_cache.disconnect()
-        logger.info("✅ Redis disconnected")
-    except Exception as e:
-        logger.error(f"❌ Redis disconnect error: {e}")
-    
-    logger.info("✅ Shutdown complete")
+    logger.info("👋 서버 종료")
 
 
-# ⭐ 라우터 등록 (선물만)
-app.include_router(auth.router, prefix=settings.API_V1_STR)
-app.include_router(market.router, prefix=settings.API_V1_STR)
-app.include_router(futures.router, prefix=settings.API_V1_STR)
-
-
-# 루트 엔드포인트
-@app.get("/")
-def root():
-    """API 정보"""
+# 헬스 체크
+@app.get("/health")
+async def health_check():
+    """헬스 체크"""
     return {
-        "message": f"{settings.PROJECT_NAME} v{settings.VERSION}",
-        "status": "running",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "docs": "/docs",
+        "status": "healthy",
+        "version": settings.VERSION,
         "features": [
-            "선물 거래 (레버리지 최대 125x)",
-            "롱/숏 포지션",
-            "실시간 시세",
-            "WebSocket 지원"
+            "선물 거래",
+            "포트폴리오",
+            "실시간 체결",
+            "분할 체결"
         ]
     }
 
 
-# 헬스체크
-@app.get("/health")
-def health_check():
-    """서버 상태 확인"""
-    try:
-        cache_stats = cache_manager.get_stats()
-    except Exception as e:
-        logger.error(f"Cache stats error: {e}")
-        cache_stats = {"error": str(e)}
-    
+# 루트 엔드포인트
+@app.get("/")
+async def root():
+    """루트"""
     return {
-        "status": "healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "message": "BeenCoin 선물 거래 API",
         "version": settings.VERSION,
-        "cache": cache_stats,
-        "websocket_connections": len(manager.active_connections)
+        "docs": "/docs",
+        "endpoints": {
+            "auth": "/api/v1/auth",
+            "market": "/api/v1/market",
+            "futures": "/api/v1/futures",
+            "portfolio": "/api/v1/futures/portfolio"
+        }
     }
-
-
-# WebSocket 엔드포인트
-@app.websocket("/ws/realtime")
-async def websocket_realtime(websocket: WebSocket):
-    """실시간 가격 스트리밍"""
-    await manager.connect(websocket)
-    
-    try:
-        while True:
-            try:
-                prices = await get_multiple_prices(settings.SUPPORTED_SYMBOLS)
-                
-                data = {
-                    "type": "price_update",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "prices": {
-                        symbol: float(price)
-                        for symbol, price in prices.items()
-                    }
-                }
-                
-                await manager.broadcast(data)
-                
-            except Exception as e:
-                logger.error(f"❌ Price broadcast error: {e}")
-            
-            await asyncio.sleep(1)
-    
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        logger.info("🔌 Client disconnected")
-    except Exception as e:
-        logger.error(f"❌ WebSocket error: {e}")
-        manager.disconnect(websocket)
 
 
 if __name__ == "__main__":
     import uvicorn
+    
     uvicorn.run(
         "app.main:app",
-        host=settings.API_HOST,
-        port=settings.API_PORT,
+        host="0.0.0.0",
+        port=8000,
         reload=True,
-        log_level=settings.LOG_LEVEL.lower()
+        log_level="info"
     )

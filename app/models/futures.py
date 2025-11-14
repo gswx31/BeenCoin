@@ -30,9 +30,10 @@ class FuturesOrderType(str, Enum):
 
 class FuturesPositionStatus(str, Enum):
     """선물 포지션 상태"""
-    OPEN = "OPEN"          # 포지션 열림
-    CLOSED = "CLOSED"      # 포지션 닫힘
-    LIQUIDATED = "LIQUIDATED"  # 청산됨
+    PENDING = "PENDING"        # ⭐⭐⭐ 이 줄만 추가!
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    LIQUIDATED = "LIQUIDATED"
 
 
 # =====================================================
