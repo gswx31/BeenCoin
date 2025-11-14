@@ -1,5 +1,4 @@
-﻿# app/models/database.py
-"""
+﻿"""
 데이터베이스 모델 정의 - UUID 보안 적용 버전
 """
 from sqlmodel import SQLModel, Field, Relationship
@@ -82,22 +81,16 @@ class TradingAccount(SQLModel, table=True):
     # 잔액 정보
     balance: Decimal = Field(
         default=Decimal("100000"),
-        max_digits=20,
-        decimal_places=8,
         description="사용 가능한 잔액"
     )
     locked_balance: Decimal = Field(
         default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8,
         description="주문에 걸려있는 금액 (미체결 주문)"
     )
     
     # 수익 정보
     total_profit: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
+        default=Decimal("0")
     )
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -144,34 +137,24 @@ class Order(SQLModel, table=True):
     # 가격/수량
     price: Optional[Decimal] = Field(
         default=None,
-        max_digits=20,
-        decimal_places=8,
         description="지정가 (시장가는 None)"
     )
-    quantity: Decimal = Field(max_digits=20, decimal_places=8)
+    quantity: Decimal = Field()
     filled_quantity: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
+        default=Decimal("0")
     )
     average_price: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8
+        default=None
     )
     
     # 수수료
     fee: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8
+        default=None
     )
     
     # 손절/익절 가격 (로스컷/베네핏컷)
     stop_price: Optional[Decimal] = Field(
         default=None,
-        max_digits=20,
-        decimal_places=8,
         description="손절(STOP_LOSS) 또는 익절(TAKE_PROFIT) 트리거 가격"
     )
     
@@ -201,24 +184,18 @@ class Position(SQLModel, table=True):
     symbol: str = Field(index=True, max_length=20)
     
     # 수량/가격
-    quantity: Decimal = Field(max_digits=20, decimal_places=8)
-    average_price: Decimal = Field(max_digits=20, decimal_places=8)
+    quantity: Decimal = Field()
+    average_price: Decimal = Field()
     current_price: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
+        default=Decimal("0")
     )
     
     # 평가 정보
     current_value: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
+        default=Decimal("0")
     )
     unrealized_profit: Decimal = Field(
-        default=Decimal("0"),
-        max_digits=20,
-        decimal_places=8
+        default=Decimal("0")
     )
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -255,15 +232,13 @@ class Transaction(SQLModel, table=True):
     # 거래 정보
     symbol: str = Field(index=True, max_length=20)
     side: OrderSide
-    quantity: Decimal = Field(max_digits=20, decimal_places=8)
-    price: Decimal = Field(max_digits=20, decimal_places=8)
-    fee: Decimal = Field(max_digits=20, decimal_places=8)
+    quantity: Decimal = Field()
+    price: Decimal = Field()
+    fee: Decimal = Field()
     
     # 실현 손익 (매도 시에만)
     realized_profit: Optional[Decimal] = Field(
-        default=None,
-        max_digits=20,
-        decimal_places=8
+        default=None
     )
     
     timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
@@ -291,7 +266,7 @@ class PriceAlert(SQLModel, table=True):
     symbol: str = Field(index=True, max_length=20)
     
     # 알림 조건
-    target_price: Decimal = Field(max_digits=20, decimal_places=8)
+    target_price: Decimal = Field()
     condition: str = Field(
         max_length=10,
         description="ABOVE(이상) 또는 BELOW(이하)"
