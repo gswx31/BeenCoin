@@ -1,7 +1,6 @@
 # Multi-stage build for optimized image size
 FROM python:3.10-slim as builder
 
-# Set working directory
 WORKDIR /app
 
 # Install system dependencies
@@ -20,7 +19,6 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 # ============================================
 FROM python:3.10-slim
 
-# Set working directory
 WORKDIR /app
 
 # Copy Python dependencies from builder
@@ -29,10 +27,12 @@ COPY --from=builder /root/.local /root/.local
 # Make sure scripts in .local are usable
 ENV PATH=/root/.local/bin:$PATH
 
-# Copy application code
+# Copy application code (필수만!)
 COPY app/ ./app/
-COPY manage_db.py .
-COPY .env.example .env
+
+# .env 파일 (선택적)
+RUN echo "DATABASE_URL=sqlite:///./beencoin.db" > .env && \
+    echo "SECRET_KEY=change-me-in-production" >> .env
 
 # Create necessary directories
 RUN mkdir -p logs backups

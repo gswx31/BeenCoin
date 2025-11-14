@@ -64,7 +64,7 @@ jobs:
         # 회원가입 테스트
         curl -X POST http://localhost:8000/api/v1/auth/register \
           -H "Content-Type: application/json" \
-          -d '{"username":"testuser","password":"testpass123"}' || echo "Registration test"
+          -d '{"username":"testuser","password":"testpass12311"}' || echo "Registration test"
         
         # 마켓 데이터 테스트
         curl -f http://localhost:8000/api/v1/market/coins || exit 1
