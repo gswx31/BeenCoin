@@ -148,7 +148,7 @@ ignore = [
 
 # MyPy 설정 (타입 체킹)
 [tool.mypy]
-python_version = "3.9"
+PYTHON_VERSION: '3.10'
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
