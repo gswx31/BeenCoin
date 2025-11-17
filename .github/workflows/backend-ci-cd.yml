@@ -1,43 +1,110 @@
-name: Backend Deployment Test
+# ============================================================================
+# 파일 위치: .github/workflows/backend-cicd.yml
+# ============================================================================
+# 설명: Pytest만 사용하는 간소화된 CI/CD 파이프라인
+# 생성 방법:
+#   1. 프로젝트 루트에서: mkdir -p .github/workflows
+#   2. 이 내용을 .github/workflows/backend-cicd.yml 에 저장
+# ============================================================================
+
+name: Backend CI/CD (Pytest)
 
 on:
-  workflow_run:
-    workflows: ["Backend CI/CD Pipeline"]
-    types:
-      - completed
+  push:
+    branches: [main, develop]
+  pull_request:
     branches: [main]
-  workflow_dispatch:  # 수동 실행 가능
+
+env:
+  PYTHON_VERSION: '3.10'
 
 jobs:
   # ============================================
-  # 백엔드 통합 테스트
+  # 1. 코드 품질 검사
   # ============================================
-  integration-test:
-    name: Backend Integration Test
+  code-quality:
+    name: Code Quality
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     
     steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-
-    - name: 🐍 Set up Python
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
-
-    - name: 📦 Install dependencies
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install -r requirements-test.txt
+    
+    - name: Black formatting check
+      run: black --check app/ tests/
+      continue-on-error: true
+    
+    - name: Ruff linting
+      run: ruff check app/ tests/
+      continue-on-error: true
 
-    - name: 🗄️ Initialize database
+  # ============================================
+  # 2. 단위 테스트
+  # ============================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+    
+    - name: Run unit tests
+      run: |
+        pytest tests/unit/ -v \
+          --cov=app \
+          --cov-report=xml \
+          --cov-report=term-missing
+
+  # ============================================
+  # 3. API 통합 테스트
+  # ============================================
+  api-integration-tests:
+    name: API Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+    
+    - name: Initialize database
       run: |
         python -c "from app.core.database import create_db_and_tables; create_db_and_tables()"
-
-    - name: 🚀 Start backend server
+    
+    - name: Start backend server
       run: |
-        # 로그 파일로 출력하면서 백그라운드 실행
         nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > server.log 2>&1 &
         echo $! > server.pid
         
@@ -51,73 +118,132 @@ jobs:
           sleep 1
         done
         
-        # 로그 확인
+        # 서버 로그 확인
         cat server.log
-
-    - name: 🧪 Health check
+    
+    - name: Run API integration tests
       run: |
-        curl -f http://localhost:8000/health || exit 1
-        echo "✅ Backend is healthy!"
-
-    - name: 🧪 API endpoint test
+        pytest tests/integration/test_all_api_endpoints.py -v \
+          --cov=app \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --maxfail=5
+      env:
+        API_URL: http://localhost:8000
+    
+    - name: View server logs
+      if: always()
+      run: cat server.log || echo "No server logs"
+    
+    - name: Stop server
+      if: always()
       run: |
-        # 회원가입 테스트
-        curl -X POST http://localhost:8000/api/v1/auth/register \
-          -H "Content-Type: application/json" \
-          -d '{"username":"testuser","password":"testpass12311"}' || echo "Registration test"
-        
-        # 마켓 데이터 테스트
-        curl -f http://localhost:8000/api/v1/market/coins || exit 1
-        echo "✅ API endpoints working!"
+        if [ -f server.pid ]; then
+          kill $(cat server.pid) || true
+        fi
 
-    - name: 🐳 Docker build test
+  # ============================================
+  # 4. E2E 시나리오 테스트
+  # ============================================
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: api-integration-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+    
+    - name: Initialize database
+      run: |
+        python -c "from app.core.database import create_db_and_tables; create_db_and_tables()"
+    
+    - name: Start backend server
+      run: |
+        nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > server.log 2>&1 &
+        sleep 5
+    
+    - name: Run E2E tests
+      run: |
+        pytest tests/integration/test_all_api_endpoints.py::TestAllAPIEndpoints::test_complete_trading_flow -v
+    
+    - name: Stop server
+      if: always()
+      run: pkill -f uvicorn || true
+
+  # ============================================
+  # 5. Docker 빌드 & 테스트
+  # ============================================
+  docker-test:
+    name: Docker Build & Test
+    runs-on: ubuntu-latest
+    needs: api-integration-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Docker image
       run: |
         docker build -t beencoin-backend:test .
         echo "✅ Docker build successful!"
-
-    - name: 🐳 Docker run test
+    
+    - name: Run Docker container
       run: |
-        docker run -d -p 8001:8000 --name test-backend beencoin-backend:test
+        docker run -d -p 8000:8000 --name test-backend beencoin-backend:test
         sleep 10
-        curl -f http://localhost:8001/health || exit 1
-        echo "✅ Docker container working!"
-
-    - name: 📋 View logs
-      if: always()
-      run: |
-        docker logs test-backend || echo "No docker logs"
-
-    - name: 🧹 Cleanup
+        
+        # Health check
+        docker logs test-backend
+        curl -f http://localhost:8000/health || exit 1
+        echo "✅ Docker container is healthy!"
+    
+    - name: Cleanup
       if: always()
       run: |
         docker stop test-backend || true
         docker rm test-backend || true
 
   # ============================================
-  # 배포 준비 완료
+  # 6. 테스트 결과 요약
   # ============================================
-  deploy-ready:
-    name: Deployment Ready
+  test-summary:
+    name: Test Summary
     runs-on: ubuntu-latest
-    needs: [integration-test]
+    needs: [code-quality, unit-tests, api-integration-tests, e2e-tests, docker-test]
+    if: always()
     
     steps:
-    - name: ✅ Deployment Summary
+    - name: Generate summary
       run: |
         echo "================================"
-        echo "🚀 BACKEND DEPLOYMENT READY"
+        echo "🧪 TEST RESULTS SUMMARY"
         echo "================================"
         echo ""
-        echo "✅ CI/CD Pipeline: Passed"
-        echo "✅ Integration Tests: Passed"
-        echo "✅ Docker Build: Passed"
-        echo "✅ Health Checks: Passed"
+        echo "Code Quality: ${{ needs.code-quality.result }}"
+        echo "Unit Tests: ${{ needs.unit-tests.result }}"
+        echo "API Tests: ${{ needs.api-integration-tests.result }}"
+        echo "E2E Tests: ${{ needs.e2e-tests.result }}"
+        echo "Docker: ${{ needs.docker-test.result }}"
         echo ""
-        echo "📦 Backend image ready: beencoin-backend:latest"
-        echo ""
-        echo "🎯 Next steps:"
-        echo "  1. Tag and push to registry (optional)"
-        echo "  2. Deploy to cloud (AWS/GCP/Azure)"
-        echo "  3. Set up monitoring"
-        echo ""
-        echo "================================"
+        
+        # 실패 체크
+        if [ "${{ needs.code-quality.result }}" != "success" ] || \
+           [ "${{ needs.unit-tests.result }}" != "success" ] || \
+           [ "${{ needs.api-integration-tests.result }}" != "success" ] || \
+           [ "${{ needs.e2e-tests.result }}" != "success" ] || \
+           [ "${{ needs.docker-test.result }}" != "success" ]; then
+          echo "❌ SOME TESTS FAILED"
+          exit 1
+        else
+          echo "✅ ALL TESTS PASSED!"
+        fi

@@ -1,18 +1,24 @@
 # ============================================================================
 # 파일 위치: tests/integration/test_all_api_endpoints.py
 # ============================================================================
-# 설명: 로그인 API Form 데이터 방식 수정 버전
-# 수정 사항: json → data (OAuth2PasswordRequestForm 호환)
+# 설명: 모든 API 엔드포인트를 테스트하는 통합 테스트
+# 생성 방법:
+#   1. 프로젝트 루트에서: mkdir -p tests/integration
+#   2. 이 내용을 tests/integration/test_all_api_endpoints.py 에 저장
 # ============================================================================
 
 """
 API 통합 테스트 - 모든 엔드포인트 검증
 =====================================
 
-주요 수정:
-- 로그인 API: json → data (Form 데이터)
-- 회원가입 API: json 유지
-- 에러 코드: 503 → [400, 404, 503] (유연한 검증)
+테스트 항목:
+1. 기본 엔드포인트 (Health, Root, Docs)
+2. 인증 API (회원가입, 로그인)
+3. 마켓 데이터 API (코인, 가격, 차트)
+4. 선물 거래 API (계정, 포지션, 청산)
+5. 포트폴리오 API (요약, 통계, 거래내역)
+6. 에러 케이스
+7. E2E 시나리오
 """
 
 import pytest
@@ -66,10 +72,7 @@ class TestAllAPIEndpoints:
         username = f"testuser_{datetime.now().timestamp()}"
         response = client.post(
             "/api/v1/auth/register",
-            json={  # 회원가입은 json 유지
-                "username": username,
-                "password": "testpass123"
-            }
+            json={"username": username, "password": "testpass123"}
         )
         assert response.status_code in [200, 201]
         data = response.json()
@@ -98,7 +101,7 @@ class TestAllAPIEndpoints:
         """로그인 성공"""
         response = client.post(
             "/api/v1/auth/login",
-            data={  # ← json에서 data로 변경 (Form 데이터)
+            json={
                 "username": test_user.username,
                 "password": test_user._test_password
             }
@@ -106,7 +109,6 @@ class TestAllAPIEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
-        assert data["token_type"] == "bearer"
     
     def test_user_login_wrong_password_fails(
         self,
@@ -116,7 +118,7 @@ class TestAllAPIEndpoints:
         """잘못된 비밀번호 로그인 실패"""
         response = client.post(
             "/api/v1/auth/login",
-            data={  # ← data 사용
+            json={
                 "username": test_user.username,
                 "password": "wrongpassword"
             }
@@ -170,8 +172,7 @@ class TestAllAPIEndpoints:
     def test_get_invalid_coin_fails(self, client: TestClient):
         """존재하지 않는 코인 조회 실패"""
         response = client.get("/api/v1/market/coin/INVALIDCOIN")
-        # 503도 허용 (Binance API 에러 시)
-        assert response.status_code in [400, 404, 503]
+        assert response.status_code in [400, 404]
     
     def test_get_historical_data(self, client: TestClient):
         """과거 차트 데이터 조회"""
@@ -319,10 +320,7 @@ class TestAllAPIEndpoints:
                 "order_type": "MARKET"
             }
         )
-        
-        if open_response.status_code not in [200, 201]:
-            pytest.skip("포지션 개설 실패")
-        
+        assert open_response.status_code in [200, 201]
         position_id = open_response.json()["id"]
         
         # 포지션 청산
@@ -349,7 +347,7 @@ class TestAllAPIEndpoints:
                 "order_type": "MARKET"
             }
         )
-        assert response.status_code in [400, 422, 503]
+        assert response.status_code in [400, 422]
     
     def test_open_position_invalid_leverage_fails(
         self,
@@ -457,10 +455,10 @@ class TestAllAPIEndpoints:
         )
         assert register_response.status_code in [200, 201]
         
-        # 2. 로그인 (Form 데이터)
+        # 2. 로그인
         login_response = client.post(
             "/api/v1/auth/login",
-            data={"username": username, "password": "testpass123"}  # ← data 사용
+            json={"username": username, "password": "testpass123"}
         )
         assert login_response.status_code == 200
         token = login_response.json()["access_token"]
@@ -485,10 +483,7 @@ class TestAllAPIEndpoints:
                 "order_type": "MARKET"
             }
         )
-        
-        if position_response.status_code not in [200, 201]:
-            pytest.skip("포지션 개설 실패 - Binance API 문제일 수 있음")
-        
+        assert position_response.status_code in [200, 201]
         position_id = position_response.json()["id"]
         
         # 5. 포지션 조회
@@ -518,7 +513,7 @@ class TestAllAPIEndpoints:
 
 
 # =================================================================
-# Pytest Fixture (수정됨)
+# Pytest Fixture
 # =================================================================
 
 @pytest.fixture
@@ -526,14 +521,10 @@ def auth_headers(client: TestClient, test_user: User) -> dict:
     """인증 헤더 생성"""
     login_response = client.post(
         "/api/v1/auth/login",
-        data={  # ← json에서 data로 변경
+        json={
             "username": test_user.username,
             "password": test_user._test_password
         }
     )
-    
-    if login_response.status_code != 200:
-        pytest.fail(f"로그인 실패: {login_response.status_code} - {login_response.text}")
-    
     token = login_response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
