@@ -1,7 +1,7 @@
 # ============================================================================
 # 파일 위치: tests/conftest.py
 # ============================================================================
-# 설명: 테스트 Fixture 설정 (간소화 버전)
+# 설명: 테스트 Fixture 설정 (최종 수정 버전)
 # ============================================================================
 
 """
@@ -144,7 +144,7 @@ def test_user(user_factory) -> User:
 
 
 # =============================================================================
-# Auth Fixtures
+# Auth Fixtures - ✅ 최종 수정 버전
 # =============================================================================
 
 @pytest.fixture
@@ -152,22 +152,27 @@ def auth_token(test_user: User, client: TestClient) -> str:
     """JWT 토큰 생성 (실제 로그인)"""
     response = client.post(
         "/api/v1/auth/login",
-        json={
+        data={  # ✅ json → data로 변경 (Form Data)
             "username": test_user.username,
             "password": test_user._test_password
         }
     )
     
     if response.status_code == 200:
+        logger.info(f"✅ auth_token fixture: 토큰 생성 성공 - {test_user.username}")
         return response.json()["access_token"]
     else:
         # 로그인 실패 시 직접 생성
+        logger.warning(f"⚠️ auth_token fixture: 로그인 실패 (status: {response.status_code})")
+        logger.warning(f"   Response: {response.text}")
+        logger.warning(f"   토큰 직접 생성으로 폴백")
         return create_access_token(data={"sub": test_user.username})
 
 
 @pytest.fixture
 def auth_headers(auth_token: str) -> dict:
     """인증 헤더"""
+    logger.info(f"✅ auth_headers fixture: 헤더 생성 완료")
     return {"Authorization": f"Bearer {auth_token}"}
 
 
