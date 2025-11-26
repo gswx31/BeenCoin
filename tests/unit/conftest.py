@@ -4,18 +4,6 @@
 # Unit 테스트 전용 설정 - pytest-asyncio 충돌 방지
 # ============================================================================
 
-"""
-Unit 테스트는 DB, API 클라이언트 등 외부 의존성 없이 실행됩니다.
-
-문제 원인:
-- pytest-asyncio 0.23.0의 버그
-- asyncio_mode=auto가 빈 패키지를 처리할 때 
-  'Package' object has no attribute 'obj' 에러 발생
-
-해결:
-- 이 conftest.py가 루트 conftest.py보다 우선 적용됨
-- pytest-asyncio 관련 설정을 오버라이드
-"""
 
 import pytest
 
