@@ -96,12 +96,6 @@ def is_ci_environment() -> bool:
 class MockBinanceData:
     """Binance API Mock 응답 데이터"""
     
-    # 유효한 심볼 목록
-    VALID_SYMBOLS = {
-        "BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", 
-        "XRPUSDT", "SOLUSDT", "DOGEUSDT", "DOTUSDT"
-    }
-    
     PRICES = {
         "BTCUSDT": "97000.00",
         "ETHUSDT": "3400.00",
@@ -114,23 +108,11 @@ class MockBinanceData:
     }
     
     @classmethod
-    def is_valid_symbol(cls, symbol: str) -> bool:
-        """심볼 유효성 검사"""
-        return symbol in cls.VALID_SYMBOLS
-    
-    @classmethod
     def get_price(cls, symbol: str) -> str:
-        if not cls.is_valid_symbol(symbol):
-            raise Exception(f"Invalid symbol: {symbol}")
         return cls.PRICES.get(symbol, "100.00")
     
     @classmethod
     def ticker_24hr(cls, symbol: str) -> dict:
-        """24시간 티커 데이터 - 존재하지 않는 심볼은 에러"""
-        if not cls.is_valid_symbol(symbol):
-            # 존재하지 않는 심볼에 대한 에러 응답
-            raise Exception(f"Invalid symbol: {symbol}")
-        
         price = cls.get_price(symbol)
         return {
             "symbol": symbol,
@@ -142,6 +124,62 @@ class MockBinanceData:
             "lowPrice": str(float(price) * 0.97),
             "quoteVolume": "2500000000.00",
         }
+    
+    @classmethod
+    def ticker_price(cls, symbol: str) -> dict:
+        return {"symbol": symbol, "price": cls.get_price(symbol)}
+    
+    @classmethod
+    def all_ticker_prices(cls) -> list:
+        return [{"symbol": s, "price": p} for s, p in cls.PRICES.items()]
+    
+    @classmethod
+    def klines(cls, symbol: str, limit: int = 24) -> list:
+        base_time = int(datetime.now().timestamp() * 1000)
+        base_price = float(cls.get_price(symbol))
+        return [
+            [
+                base_time - (i * 3600000),
+                str(base_price * (1 + random.uniform(-0.02, 0.02))),
+                str(base_price * 1.02),
+                str(base_price * 0.98),
+                str(base_price * (1 + random.uniform(-0.01, 0.01))),
+                "1000.00",
+                base_time - (i * 3600000) + 3599999,
+                "50000000.00",
+                100,
+                "500.00",
+                "25000000.00",
+                "0"
+            ]
+            for i in range(limit)
+        ]
+    
+    @classmethod
+    def recent_trades(cls, symbol: str, limit: int = 20) -> list:
+        base_price = float(cls.get_price(symbol))
+        base_time = int(datetime.now().timestamp() * 1000)
+        return [
+            {
+                "id": 12345678 + i,
+                "price": str(base_price * (1 + random.uniform(-0.001, 0.001))),
+                "qty": str(round(random.uniform(0.001, 0.1), 6)),
+                "time": base_time - (i * 1000),
+                "isBuyerMaker": i % 2 == 0,
+                "isBestMatch": True
+            }
+            for i in range(limit)
+        ]
+    
+    @classmethod
+    def order_book(cls, symbol: str, limit: int = 10) -> dict:
+        base_price = float(cls.get_price(symbol))
+        return {
+            "lastUpdateId": 123456789,
+            "bids": [[str(base_price * (1 - 0.001 * i)), str(round(random.uniform(0.1, 2.0), 4))] for i in range(limit)],
+            "asks": [[str(base_price * (1 + 0.001 * i)), str(round(random.uniform(0.1, 2.0), 4))] for i in range(limit)]
+        }
+
 
 class MockHttpxResponse:
     """httpx Response Mock"""
@@ -154,12 +192,9 @@ class MockHttpxResponse:
     
     def raise_for_status(self):
         if self.status_code >= 400:
-            # Binance API 에러 형식으로 예외 발생
-            error_data = self._json_data
-            raise Exception(
-                f"Binance API Error {self.status_code}: "
-                f"{error_data.get('msg', 'Unknown error')}"
-            )
+            raise Exception(f"HTTP Error: {self.status_code}")
+
+
 @pytest.fixture(autouse=True)
 def mock_binance_api_in_ci(monkeypatch):
     """CI 환경에서 Binance API 자동 Mock"""
@@ -187,47 +222,39 @@ def mock_binance_api_in_ci(monkeypatch):
             params = params or {}
             symbol = params.get("symbol", "BTCUSDT")
             
-            try:
-                if "ticker/24hr" in url:
-                    if symbol:
-                        # 단일 심볼 조회
-                        if not MockBinanceData.is_valid_symbol(symbol):
-                            return MockHttpxResponse(
-                                {"code": -1121, "msg": "Invalid symbol."}, 
-                                status_code=400
-                            )
-                        return MockHttpxResponse(MockBinanceData.ticker_24hr(symbol))
-                    # 전체 심볼 조회 (유효한 심볼만 반환)
-                    valid_tickers = [
-                        MockBinanceData.ticker_24hr(s) 
-                        for s in MockBinanceData.VALID_SYMBOLS
-                    ]
-                    return MockHttpxResponse(valid_tickers)
-                
-                elif "ticker/price" in url:
-                    if symbol:
-                        if not MockBinanceData.is_valid_symbol(symbol):
-                            return MockHttpxResponse(
-                                {"code": -1121, "msg": "Invalid symbol."}, 
-                                status_code=400
-                            )
-                        return MockHttpxResponse(MockBinanceData.ticker_price(symbol))
-                    return MockHttpxResponse(MockBinanceData.all_ticker_prices())
-                
-                # ... 나머지 메서드들 ...
-                
-            except Exception as e:
-                # Binance API 에러 형식으로 반환
-                error_msg = str(e)
-                if "Invalid symbol" in error_msg:
-                    return MockHttpxResponse(
-                        {"code": -1121, "msg": "Invalid symbol."}, 
-                        status_code=400
-                    )
-                return MockHttpxResponse(
-                    {"code": -1000, "msg": "Internal error"}, 
-                    status_code=500
-                )
+            if "ticker/24hr" in url:
+                if symbol:
+                    return MockHttpxResponse(MockBinanceData.ticker_24hr(symbol))
+                return MockHttpxResponse([MockBinanceData.ticker_24hr(s) for s in MockBinanceData.PRICES])
+            
+            elif "ticker/price" in url:
+                if symbol:
+                    return MockHttpxResponse(MockBinanceData.ticker_price(symbol))
+                return MockHttpxResponse(MockBinanceData.all_ticker_prices())
+            
+            elif "klines" in url:
+                limit = int(params.get("limit", 24))
+                return MockHttpxResponse(MockBinanceData.klines(symbol, limit))
+            
+            elif "trades" in url:
+                limit = int(params.get("limit", 20))
+                return MockHttpxResponse(MockBinanceData.recent_trades(symbol, limit))
+            
+            elif "depth" in url:
+                limit = int(params.get("limit", 10))
+                return MockHttpxResponse(MockBinanceData.order_book(symbol, limit))
+            
+            elif "ping" in url:
+                return MockHttpxResponse({})
+            
+            elif "time" in url:
+                return MockHttpxResponse({"serverTime": int(datetime.now().timestamp() * 1000)})
+            
+            return MockHttpxResponse({})
+        
+        async def post(self, url: str, **kwargs):
+            return MockHttpxResponse({"status": "ok"})
+    
     monkeypatch.setattr("httpx.AsyncClient", MockAsyncClient)
     logger.info("✅ Binance API Mock 적용 완료")
     yield
