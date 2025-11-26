@@ -12,7 +12,9 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
 bcrypt==4.0.1
-
+PyJWT>=2.8.0                  # ← 추가 (테스트용)
+# Security 섹션에 추가
+argon2-cffi>=21.0.0
 # HTTP
 httpx==0.25.2
 
