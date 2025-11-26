@@ -1,21 +1,26 @@
-"""
-테스트 유틸리티 모듈
-===================
+# ============================================================================
+# 파일: tests/test_helpers.py
+# ============================================================================
+# 테스트 헬퍼 유틸리티
+# ============================================================================
 
-재사용 가능한 테스트 헬퍼 함수들
 """
+테스트 헬퍼:
+1. 테스트 데이터 팩토리
+2. API 테스트 헬퍼
+3. 데이터베이스 헬퍼
+4. Mock 객체
+"""
+
+import uuid
 from decimal import Decimal
-from typing import Dict, List, Optional
 from datetime import datetime, timedelta
-import random
-import string
-
-from app.models.database import User, TradingAccount, Order, Position
-from sqlmodel import Session
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
 
 
 # =============================================================================
-# 데이터 생성 헬퍼
+# 1. 테스트 데이터 팩토리
 # =============================================================================
 
 class TestDataFactory:
@@ -24,427 +29,173 @@ class TestDataFactory:
     @staticmethod
     def generate_random_username(prefix: str = "user") -> str:
         """랜덤 사용자명 생성"""
-        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        return f"{prefix}_{suffix}"
+        return f"{prefix}_{uuid.uuid4().hex[:8]}"
     
     @staticmethod
-    def generate_random_password(length: int = 12) -> str:
-        """랜덤 비밀번호 생성"""
-        chars = string.ascii_letters + string.digits + "!@#$%^&*"
-        return ''.join(random.choices(chars, k=length))
+    def generate_random_email(domain: str = "test.com") -> str:
+        """랜덤 이메일 생성"""
+        return f"{uuid.uuid4().hex[:8]}@{domain}"
     
     @staticmethod
-    def create_test_users(
-        session: Session,
-        count: int = 5,
-        **kwargs
-    ) -> List[User]:
-        """여러 테스트 사용자 생성"""
-        from app.utils.security import hash_password
-        
-        users = []
-        for i in range(count):
-            user = User(
-                username=f"testuser_{i}",
-                hashed_password=hash_password(f"password{i}"),
-                is_active=kwargs.get('is_active', True)
-            )
-            session.add(user)
-            users.append(user)
-        
-        session.commit()
-        return users
-    
-    @staticmethod
-    def create_test_orders(
-        session: Session,
-        user: User,
-        count: int = 10,
-        **kwargs
-    ) -> List[Order]:
-        """여러 테스트 주문 생성"""
-        orders = []
-        symbols = kwargs.get('symbols', ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'])
-        
-        for i in range(count):
-            order = Order(
-                user_id=user.id,
-                symbol=random.choice(symbols),
-                side=random.choice(['BUY', 'SELL']),
-                order_type=kwargs.get('order_type', 'MARKET'),
-                price=Decimal(str(random.uniform(100, 100000))),
-                quantity=Decimal(str(random.uniform(0.001, 10))),
-                filled_quantity=Decimal("0"),
-                order_status=kwargs.get('order_status', 'PENDING'),
-            )
-            session.add(order)
-            orders.append(order)
-        
-        session.commit()
-        return orders
-
-
-# =============================================================================
-# Assertion 헬퍼
-# =============================================================================
-
-class TestAssertions:
-    """커스텀 assertion 헬퍼"""
-    
-    @staticmethod
-    def assert_decimal_equal(
-        actual: Decimal,
-        expected: Decimal,
-        tolerance: Decimal = Decimal("0.01")
-    ):
-        """Decimal 값 동등성 검증 (오차 허용)"""
-        diff = abs(actual - expected)
-        assert diff <= tolerance, (
-            f"Expected {expected}, but got {actual}. "
-            f"Difference: {diff} (tolerance: {tolerance})"
-        )
-    
-    @staticmethod
-    def assert_response_success(response, expected_status: int = 200):
-        """API 응답 성공 검증"""
-        assert response.status_code == expected_status, (
-            f"Expected status {expected_status}, but got {response.status_code}. "
-            f"Response: {response.json()}"
-        )
-    
-    @staticmethod
-    def assert_has_keys(data: dict, required_keys: List[str]):
-        """딕셔너리 필수 키 존재 검증"""
-        missing_keys = set(required_keys) - set(data.keys())
-        assert not missing_keys, f"Missing required keys: {missing_keys}"
-    
-    @staticmethod
-    def assert_balance_changed(
-        initial: Decimal,
-        final: Decimal,
-        expected_change: Decimal,
-        tolerance: Decimal = Decimal("1")
-    ):
-        """잔액 변화 검증"""
-        actual_change = final - initial
-        TestAssertions.assert_decimal_equal(
-            actual_change,
-            expected_change,
-            tolerance
-        )
-
-
-# =============================================================================
-# Mock 헬퍼
-# =============================================================================
-
-class MockBinanceService:
-    """Binance Service Mock 헬퍼"""
-    
-    def __init__(self):
-        self.prices = {
-            "BTCUSDT": Decimal("50000"),
-            "ETHUSDT": Decimal("3000"),
-            "BNBUSDT": Decimal("400"),
-            "ADAUSDT": Decimal("0.5")
+    def generate_order_data(
+        symbol: str = "BTCUSDT",
+        side: str = "LONG",
+        quantity: str = "0.001",
+        leverage: int = 10,
+        order_type: str = "MARKET",
+        price: Optional[str] = None
+    ) -> dict:
+        """주문 데이터 생성"""
+        data = {
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "leverage": leverage,
+            "order_type": order_type
         }
-        self.call_count = 0
+        if price:
+            data["price"] = price
+        return data
     
-    def get_current_price(self, symbol: str) -> Decimal:
-        """현재가 조회 Mock"""
-        self.call_count += 1
-        return self.prices.get(symbol, Decimal("1000"))
+    @staticmethod
+    def generate_user_data(
+        username: Optional[str] = None,
+        password: str = "testpass123"
+    ) -> dict:
+        """사용자 데이터 생성"""
+        return {
+            "username": username or TestDataFactory.generate_random_username(),
+            "password": password
+        }
     
-    def set_price(self, symbol: str, price: Decimal):
-        """가격 설정"""
-        self.prices[symbol] = price
-    
-    def simulate_price_change(self, symbol: str, change_percent: float):
-        """가격 변동 시뮬레이션"""
-        current = self.prices.get(symbol, Decimal("1000"))
-        new_price = current * Decimal(str(1 + change_percent / 100))
-        self.prices[symbol] = new_price
-        return new_price
+    @staticmethod
+    def generate_batch_users(count: int) -> List[dict]:
+        """여러 사용자 데이터 생성"""
+        return [
+            TestDataFactory.generate_user_data()
+            for _ in range(count)
+        ]
 
 
 # =============================================================================
-# 시간 관련 헬퍼
-# =============================================================================
-
-class TimeHelper:
-    """시간 관련 헬퍼"""
-    
-    @staticmethod
-    def freeze_time(dt: datetime):
-        """시간 고정 (pytest-freezegun 사용 시)"""
-        from freezegun import freeze_time
-        return freeze_time(dt)
-    
-    @staticmethod
-    def travel_time(days: int = 0, hours: int = 0, minutes: int = 0):
-        """시간 이동"""
-        delta = timedelta(days=days, hours=hours, minutes=minutes)
-        return datetime.now() + delta
-
-
-# =============================================================================
-# 데이터베이스 헬퍼
-# =============================================================================
-
-class DatabaseHelper:
-    """데이터베이스 관련 헬퍼"""
-    
-    @staticmethod
-    def count_records(session: Session, model) -> int:
-        """특정 모델의 레코드 수 조회"""
-        return session.query(model).count()
-    
-    @staticmethod
-    def clear_table(session: Session, model):
-        """특정 테이블 모든 레코드 삭제"""
-        session.query(model).delete()
-        session.commit()
-    
-    @staticmethod
-    def get_last_record(session: Session, model):
-        """마지막 레코드 조회"""
-        return session.query(model).order_by(model.id.desc()).first()
-
-
-# =============================================================================
-# API 테스트 헬퍼
+# 2. API 테스트 헬퍼
 # =============================================================================
 
 class APITestHelper:
     """API 테스트 헬퍼"""
     
-    @staticmethod
-    def create_auth_user_and_get_headers(client, username: str = None, password: str = None):
-        """사용자 생성 및 인증 헤더 반환"""
+    def __init__(self, client):
+        self.client = client
+        self.headers = {}
+    
+    def register_user(
+        self,
+        username: Optional[str] = None,
+        password: str = "testpass123"
+    ) -> dict:
+        """사용자 등록"""
         username = username or TestDataFactory.generate_random_username()
-        password = password or "testpass123"
-        
-        # 회원가입
-        client.post(
+        response = self.client.post(
             "/api/v1/auth/register",
             json={"username": username, "password": password}
         )
-        
-        # 로그인
-        login_response = client.post(
+        return {
+            "response": response,
+            "username": username,
+            "password": password
+        }
+    
+    def login(self, username: str, password: str) -> dict:
+        """로그인"""
+        response = self.client.post(
             "/api/v1/auth/login",
-            data={"username": username, "password": password},
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
+            data={"username": username, "password": password}
         )
+        if response.status_code == 200:
+            token = response.json()["access_token"]
+            self.headers = {"Authorization": f"Bearer {token}"}
+        return {
+            "response": response,
+            "token": response.json().get("access_token") if response.status_code == 200 else None,
+            "headers": self.headers
+        }
+    
+    def register_and_login(
+        self,
+        username: Optional[str] = None,
+        password: str = "testpass123"
+    ) -> dict:
+        """등록 및 로그인"""
+        reg = self.register_user(username, password)
+        if reg["response"].status_code not in [200, 201]:
+            return reg
         
-        token = login_response.json()["access_token"]
-        return {"Authorization": f"Bearer {token}"}
+        login = self.login(reg["username"], password)
+        return {
+            "register_response": reg["response"],
+            "login_response": login["response"],
+            "username": reg["username"],
+            "headers": login["headers"]
+        }
     
-    @staticmethod
-    def extract_error_message(response) -> str:
-        """API 에러 메시지 추출"""
-        try:
-            return response.json().get("detail", "Unknown error")
-        except:
-            return response.text
-
-
-# =============================================================================
-# 성능 측정 헬퍼
-# =============================================================================
-
-class PerformanceHelper:
-    """성능 측정 헬퍼"""
-    
-    @staticmethod
-    def measure_execution_time(func, *args, **kwargs):
-        """함수 실행 시간 측정"""
-        import time
-        start = time.perf_counter()
-        result = func(*args, **kwargs)
-        end = time.perf_counter()
-        return result, end - start
-    
-    @staticmethod
-    def assert_performance(func, max_time: float, *args, **kwargs):
-        """성능 요구사항 검증"""
-        _, elapsed = PerformanceHelper.measure_execution_time(func, *args, **kwargs)
-        assert elapsed <= max_time, (
-            f"Function took {elapsed:.4f}s, but max allowed is {max_time}s"
+    def open_position(
+        self,
+        symbol: str = "BTCUSDT",
+        side: str = "LONG",
+        quantity: str = "0.001",
+        leverage: int = 10
+    ) -> dict:
+        """포지션 개설"""
+        response = self.client.post(
+            "/api/v1/futures/positions/open",
+            headers=self.headers,
+            json={
+                "symbol": symbol,
+                "side": side,
+                "quantity": quantity,
+                "leverage": leverage,
+                "order_type": "MARKET"
+            }
         )
-
-
-# =============================================================================
-# 로깅 헬퍼
-# =============================================================================
-
-class LogHelper:
-    """로깅 관련 헬퍼"""
+        return {
+            "response": response,
+            "position_id": response.json().get("id") if response.status_code in [200, 201] else None
+        }
     
-    @staticmethod
-    def assert_log_contains(caplog, message: str, level: str = "INFO"):
-        """로그에 특정 메시지 포함 확인"""
-        log_records = [
-            record for record in caplog.records
-            if record.levelname == level and message in record.message
-        ]
-        assert log_records, f"Log message '{message}' with level '{level}' not found"
-    
-    @staticmethod
-    def get_log_messages(caplog, level: str = None) -> List[str]:
-        """로그 메시지 목록 반환"""
-        records = caplog.records
-        if level:
-            records = [r for r in records if r.levelname == level]
-        return [r.message for r in records]
-
-
-# =============================================================================
-# 파라미터 생성 헬퍼
-# =============================================================================
-
-class ParameterHelper:
-    """파라미터 생성 헬퍼"""
-    
-    @staticmethod
-    def invalid_username_cases():
-        """유효하지 않은 사용자명 케이스"""
-        return [
-            ("ab", "Too short"),
-            ("a" * 51, "Too long"),
-            ("user@name", "Special char @"),
-            ("user#123", "Special char #"),
-            ("user space", "Contains space"),
-            ("", "Empty string"),
-        ]
-    
-    @staticmethod
-    def invalid_password_cases():
-        """유효하지 않은 비밀번호 케이스"""
-        return [
-            ("12345", "Too short"),
-            ("a" * 129, "Too long"),
-            ("", "Empty string"),
-        ]
-    
-    @staticmethod
-    def valid_order_types():
-        """유효한 주문 타입"""
-        return ["MARKET", "LIMIT"]
-    
-    @staticmethod
-    def valid_order_sides():
-        """유효한 주문 방향"""
-        return ["BUY", "SELL"]
-    
-    @staticmethod
-    def supported_symbols():
-        """지원하는 코인 심볼"""
-        return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT"]
-
-
-# =============================================================================
-# 비교 헬퍼
-# =============================================================================
-
-class ComparisonHelper:
-    """비교 관련 헬퍼"""
-    
-    @staticmethod
-    def are_dicts_equal_ignore_keys(
-        dict1: dict,
-        dict2: dict,
-        ignore_keys: List[str]
-    ) -> bool:
-        """특정 키를 무시하고 딕셔너리 비교"""
-        d1_filtered = {k: v for k, v in dict1.items() if k not in ignore_keys}
-        d2_filtered = {k: v for k, v in dict2.items() if k not in ignore_keys}
-        return d1_filtered == d2_filtered
-    
-    @staticmethod
-    def assert_lists_equal_unordered(list1: list, list2: list):
-        """순서 무관 리스트 비교"""
-        assert sorted(list1) == sorted(list2)
-
-
-# =============================================================================
-# 파일 헬퍼
-# =============================================================================
-
-class FileHelper:
-    """파일 관련 헬퍼"""
-    
-    @staticmethod
-    def create_temp_csv(data: List[dict], filename: str = "test.csv"):
-        """임시 CSV 파일 생성"""
-        import csv
-        import tempfile
-        
-        temp_file = tempfile.NamedTemporaryFile(
-            mode='w',
-            delete=False,
-            suffix='.csv',
-            newline=''
+    def close_position(self, position_id: str) -> dict:
+        """포지션 청산"""
+        response = self.client.post(
+            f"/api/v1/futures/positions/{position_id}/close",
+            headers=self.headers
         )
-        
-        if data:
-            writer = csv.DictWriter(temp_file, fieldnames=data[0].keys())
-            writer.writeheader()
-            writer.writerows(data)
-        
-        temp_file.close()
-        return temp_file.name
+        return {"response": response}
     
-    @staticmethod
-    def read_test_fixture(filename: str) -> str:
-        """테스트 fixture 파일 읽기"""
-        import os
-        fixture_path = os.path.join("tests", "fixtures", filename)
-        with open(fixture_path, 'r') as f:
-            return f.read()
+    def get_positions(self, status: str = "OPEN") -> dict:
+        """포지션 목록 조회"""
+        response = self.client.get(
+            "/api/v1/futures/positions",
+            params={"status": status},
+            headers=self.headers
+        )
+        return {
+            "response": response,
+            "positions": response.json() if response.status_code == 200 else []
+        }
+    
+    def get_account(self) -> dict:
+        """계정 조회"""
+        response = self.client.get(
+            "/api/v1/futures/account",
+            headers=self.headers
+        )
+        return {
+            "response": response,
+            "account": response.json() if response.status_code == 200 else None
+        }
 
 
 # =============================================================================
-# WebSocket 테스트 헬퍼
-# =============================================================================
-
-class WebSocketTestHelper:
-    """WebSocket 테스트 헬퍼"""
-    
-    @staticmethod
-    async def connect_and_receive(client, url: str, timeout: float = 5.0):
-        """WebSocket 연결 및 메시지 수신"""
-        import asyncio
-        
-        with client.websocket_connect(url) as websocket:
-            try:
-                data = await asyncio.wait_for(
-                    websocket.receive_json(),
-                    timeout=timeout
-                )
-                return data
-            except asyncio.TimeoutError:
-                return None
-    
-    @staticmethod
-    async def send_and_receive(client, url: str, message: dict, timeout: float = 5.0):
-        """WebSocket 메시지 송수신"""
-        import asyncio
-        
-        with client.websocket_connect(url) as websocket:
-            await websocket.send_json(message)
-            try:
-                data = await asyncio.wait_for(
-                    websocket.receive_json(),
-                    timeout=timeout
-                )
-                return data
-            except asyncio.TimeoutError:
-                return None
-
-
-# =============================================================================
-# 통합 테스트 시나리오 빌더
+# 3. 시나리오 빌더
 # =============================================================================
 
 class ScenarioBuilder:
@@ -452,55 +203,244 @@ class ScenarioBuilder:
     
     def __init__(self, client):
         self.client = client
+        self.helper = APITestHelper(client)
         self.username = None
         self.headers = None
-        self.orders = []
+        self.positions = []
+        self.results = {}
     
-    def with_registered_user(self, username: str = None, password: str = None):
-        """사용자 등록"""
-        self.username = username or TestDataFactory.generate_random_username()
-        password = password or "testpass123"
-        
-        self.client.post(
-            "/api/v1/auth/register",
-            json={"username": self.username, "password": password}
-        )
+    def with_new_user(self, username: str = None, password: str = "testpass123"):
+        """새 사용자 생성 및 로그인"""
+        result = self.helper.register_and_login(username, password)
+        self.username = result.get("username")
+        self.headers = result.get("headers")
+        self.helper.headers = self.headers
+        self.results["user"] = result
         return self
     
-    def with_authentication(self, password: str = "testpass123"):
-        """인증"""
-        response = self.client.post(
-            "/api/v1/auth/login",
-            data={"username": self.username, "password": password},
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
-        )
-        token = response.json()["access_token"]
-        self.headers = {"Authorization": f"Bearer {token}"}
+    def with_existing_user(self, username: str, password: str):
+        """기존 사용자 로그인"""
+        result = self.helper.login(username, password)
+        self.username = username
+        self.headers = result.get("headers")
+        self.helper.headers = self.headers
+        self.results["login"] = result
         return self
     
-    def with_buy_order(self, symbol: str, quantity: str, price: Decimal = None):
-        """매수 주문 추가"""
-        order_data = {
-            "symbol": symbol,
-            "side": "BUY",
-            "order_type": "LIMIT" if price else "MARKET",
-            "quantity": quantity
-        }
-        if price:
-            order_data["price"] = str(price)
-        
-        response = self.client.post(
-            "/api/v1/orders/",
-            headers=self.headers,
-            json=order_data
-        )
-        self.orders.append(response.json())
+    def open_position(
+        self,
+        symbol: str = "BTCUSDT",
+        side: str = "LONG",
+        quantity: str = "0.001",
+        leverage: int = 10
+    ):
+        """포지션 개설"""
+        result = self.helper.open_position(symbol, side, quantity, leverage)
+        if result["position_id"]:
+            self.positions.append(result["position_id"])
+        self.results[f"position_{len(self.positions)}"] = result
         return self
     
-    def execute(self):
+    def close_all_positions(self):
+        """모든 포지션 청산"""
+        for pos_id in self.positions:
+            result = self.helper.close_position(pos_id)
+            self.results[f"close_{pos_id}"] = result
+        self.positions = []
+        return self
+    
+    def verify_account_balance(self, min_balance: float = 0):
+        """계정 잔액 확인"""
+        result = self.helper.get_account()
+        account = result.get("account")
+        if account:
+            assert account.get("balance", 0) >= min_balance
+        self.results["account_check"] = result
+        return self
+    
+    def execute(self) -> dict:
         """시나리오 실행 완료"""
         return {
             "username": self.username,
             "headers": self.headers,
-            "orders": self.orders
+            "positions": self.positions,
+            "results": self.results
         }
+
+
+# =============================================================================
+# 4. Mock 객체
+# =============================================================================
+
+class MockBinanceResponse:
+    """Binance API Mock 응답"""
+    
+    @staticmethod
+    def ticker_24hr(symbol: str = "BTCUSDT") -> dict:
+        """24시간 티커 응답"""
+        return {
+            "symbol": symbol,
+            "priceChange": "1000.00",
+            "priceChangePercent": "2.00",
+            "lastPrice": "50000.00",
+            "volume": "10000.00",
+            "highPrice": "51000.00",
+            "lowPrice": "49000.00"
+        }
+    
+    @staticmethod
+    def ticker_price(symbol: str = "BTCUSDT") -> dict:
+        """현재가 응답"""
+        return {
+            "symbol": symbol,
+            "price": "50000.00"
+        }
+    
+    @staticmethod
+    def klines(symbol: str = "BTCUSDT", count: int = 24) -> list:
+        """캔들스틱 데이터"""
+        base_time = int(datetime.now().timestamp() * 1000)
+        return [
+            [
+                base_time - (i * 3600000),  # Open time
+                "50000.00",                  # Open
+                "51000.00",                  # High
+                "49000.00",                  # Low
+                "50500.00",                  # Close
+                "1000.00",                   # Volume
+                base_time - (i * 3600000) + 3599999,  # Close time
+                "50000000.00",               # Quote asset volume
+                100,                         # Number of trades
+                "500.00",                    # Taker buy base
+                "25000000.00",               # Taker buy quote
+                "0"                          # Ignore
+            ]
+            for i in range(count)
+        ]
+    
+    @staticmethod
+    def recent_trades(symbol: str = "BTCUSDT", limit: int = 20) -> list:
+        """최근 거래 내역"""
+        return [
+            {
+                "id": 12345678 + i,
+                "price": "50000.00",
+                "qty": "0.001",
+                "time": int(datetime.now().timestamp() * 1000) - (i * 1000),
+                "isBuyerMaker": i % 2 == 0
+            }
+            for i in range(limit)
+        ]
+
+
+# =============================================================================
+# 5. 어설션 헬퍼
+# =============================================================================
+
+class AssertionHelper:
+    """커스텀 어설션 헬퍼"""
+    
+    @staticmethod
+    def assert_response_ok(response, expected_status: list = None):
+        """응답 성공 확인"""
+        expected = expected_status or [200, 201]
+        assert response.status_code in expected, \
+            f"Expected {expected}, got {response.status_code}: {response.text}"
+    
+    @staticmethod
+    def assert_response_error(response, expected_status: list = None):
+        """응답 에러 확인"""
+        expected = expected_status or [400, 401, 403, 404, 422]
+        assert response.status_code in expected, \
+            f"Expected {expected}, got {response.status_code}: {response.text}"
+    
+    @staticmethod
+    def assert_has_fields(data: dict, fields: list):
+        """필수 필드 존재 확인"""
+        for field in fields:
+            assert field in data, f"Missing field: {field}"
+    
+    @staticmethod
+    def assert_list_not_empty(data: list, message: str = "List should not be empty"):
+        """리스트가 비어있지 않은지 확인"""
+        assert len(data) > 0, message
+    
+    @staticmethod
+    def assert_positive(value: float, field_name: str = "value"):
+        """양수 확인"""
+        assert value > 0, f"{field_name} should be positive, got {value}"
+    
+    @staticmethod
+    def assert_in_range(value: float, min_val: float, max_val: float, field_name: str = "value"):
+        """범위 확인"""
+        assert min_val <= value <= max_val, \
+            f"{field_name} should be between {min_val} and {max_val}, got {value}"
+
+
+# =============================================================================
+# 6. 시간 관련 헬퍼
+# =============================================================================
+
+class TimeHelper:
+    """시간 관련 헬퍼"""
+    
+    @staticmethod
+    def now_utc() -> datetime:
+        """현재 UTC 시간"""
+        return datetime.utcnow()
+    
+    @staticmethod
+    def days_ago(days: int) -> datetime:
+        """N일 전"""
+        return datetime.utcnow() - timedelta(days=days)
+    
+    @staticmethod
+    def hours_ago(hours: int) -> datetime:
+        """N시간 전"""
+        return datetime.utcnow() - timedelta(hours=hours)
+    
+    @staticmethod
+    def to_timestamp(dt: datetime) -> int:
+        """datetime을 밀리초 타임스탬프로 변환"""
+        return int(dt.timestamp() * 1000)
+    
+    @staticmethod
+    def from_timestamp(ts: int) -> datetime:
+        """밀리초 타임스탬프를 datetime으로 변환"""
+        return datetime.fromtimestamp(ts / 1000)
+
+
+# =============================================================================
+# 사용 예시
+# =============================================================================
+"""
+# API 테스트 헬퍼 사용
+def test_with_helper(client):
+    helper = APITestHelper(client)
+    result = helper.register_and_login()
+    assert result["login_response"].status_code == 200
+    
+    pos = helper.open_position("BTCUSDT", "LONG")
+    assert pos["response"].status_code in [200, 201]
+
+
+# 시나리오 빌더 사용
+def test_with_scenario(client):
+    result = (
+        ScenarioBuilder(client)
+        .with_new_user()
+        .open_position("BTCUSDT", "LONG")
+        .open_position("ETHUSDT", "SHORT")
+        .verify_account_balance(100)
+        .close_all_positions()
+        .execute()
+    )
+    assert len(result["results"]) > 0
+
+
+# 어설션 헬퍼 사용
+def test_with_assertions(client):
+    response = client.get("/api/v1/market/coins")
+    AssertionHelper.assert_response_ok(response)
+    AssertionHelper.assert_list_not_empty(response.json())
+"""

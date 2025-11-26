@@ -99,32 +99,22 @@ async def open_futures_position(
         fill_details = []
         
         if order_type == FuturesOrderType.MARKET:
-            # 시장가 체결
-            result = await execute_market_order_with_real_trades(...)
+            # ✅ 수정: 올바른 인자 전달
+            result = await execute_market_order_with_real_trades(
+                symbol=symbol,
+                side="BUY" if side == FuturesPositionSide.LONG else "SELL",  # ✅ 수정
+                quantity=quantity,  # ✅ 원래 수량 전달 (레버리지는 함수 내부에서 적용)
+                leverage=leverage   # ✅ 레버리지 전달
+            )
             
             entry_price = result["average_price"]
             fill_details = result["fills"]
+            actual_quantity = result["actual_position_size"]  # ✅ 함수에서 계산된 실제 수량
             
-            # 포지션 저장
-            session.add(position)
-            session.flush()  # position.id 생성
-            
-            # ⭐ 체결 내역 저장 (분할 체결)
-            for fill in fill_details:
-                fill_record = FuturesFill(
-                    position_id=position.id,
-                    price=Decimal(str(fill["price"])),
-                    quantity=Decimal(str(fill["quantity"])),
-                    timestamp=datetime.fromisoformat(fill["timestamp"])
-                )
-                session.add(fill_record)
-            
-            logger.info(
-                f"✅ 체결 내역 저장: {len(fill_details)}건"
-            )
+            logger.info(f"✅ 시장가 체결: {len(fill_details)}건, 평균가: {entry_price:.2f}")
         
         elif order_type == FuturesOrderType.LIMIT:
-            # ⭐ 지정가: PENDING 상태로 등록
+            # ✅ 지정가 주문 처리
             if price is None:
                 raise HTTPException(
                     status_code=400,
@@ -132,14 +122,12 @@ async def open_futures_position(
                 )
             
             entry_price = price
+            actual_quantity = quantity * Decimal(str(leverage))
             
             logger.info(
-                f"📝 지정가 등록:\n"
-                f"   - 주문: {quantity} {symbol} @ ${price:.2f}\n"
-                f"   - 실제 포지션: {actual_quantity} (레버리지 {leverage}x)\n"
-                f"   - 상태: PENDING (백그라운드 작업이 자동 체결)"
+                f"📝 지정가 등록: {quantity} {symbol} @ ${price:.2f} "
+                f"(레버리지 {leverage}x → 실제 {actual_quantity})"
             )
-        
         # 3. 필요 증거금 계산
         position_value = entry_price * actual_quantity
         required_margin = position_value / Decimal(str(leverage))
