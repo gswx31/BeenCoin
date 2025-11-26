@@ -10,6 +10,7 @@
 4. 거래 통계
 """
 
+from fastapi import APIRouter, Depends, Query, HTTPException  # ⭐ HTTPException 추가
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 from typing import List, Optional

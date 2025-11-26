@@ -1,182 +1,187 @@
-# app/utils/error_handlers.py - 새 파일
-from fastapi import Request, status
+# app/utils/error_handlers.py
+"""
+통합 에러 핸들러
+================
+
+⚠️ 수정 내용: 
+- 예제 코드 제거 (F821 오류 수정)
+- 실제 사용하는 에러 핸들러만 남김
+"""
+
+from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy.exc import IntegrityError
-from decimal import InvalidOperation
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import traceback
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+# ================================
+# 커스텀 예외 클래스
+# ================================
 
 class BeenCoinException(Exception):
-    """베이스 예외 클래스"""
-    def __init__(self, message: str, status_code: int = 400):
-        self.message = message
+    """기본 예외 클래스"""
+    def __init__(self, detail: str, status_code: int = 400, error_code: str = None):
+        self.detail = detail
         self.status_code = status_code
-        super().__init__(self.message)
+        self.error_code = error_code or "BEENCOIN_ERROR"
+        super().__init__(detail)
+
 
 class InsufficientBalanceError(BeenCoinException):
-    """잔액 부족 에러"""
-    def __init__(self):
-        super().__init__("잔액이 부족합니다", status.HTTP_400_BAD_REQUEST)
+    """잔액 부족"""
+    def __init__(self, required: float = 0, available: float = 0):
+        detail = f"잔액이 부족합니다. 필요: ${required:,.2f}, 보유: ${available:,.2f}"
+        super().__init__(detail, 400, "INSUFFICIENT_BALANCE")
+
 
 class InsufficientQuantityError(BeenCoinException):
-    """수량 부족 에러"""
-    def __init__(self):
-        super().__init__("보유 수량이 부족합니다", status.HTTP_400_BAD_REQUEST)
+    """수량 부족"""
+    def __init__(self, required: float = 0, available: float = 0):
+        detail = f"수량이 부족합니다. 필요: {required}, 보유: {available}"
+        super().__init__(detail, 400, "INSUFFICIENT_QUANTITY")
+
 
 class InvalidSymbolError(BeenCoinException):
-    """지원하지 않는 심볼 에러"""
+    """잘못된 심볼"""
     def __init__(self, symbol: str):
-        super().__init__(
-            f"지원하지 않는 심볼입니다: {symbol}", 
-            status.HTTP_400_BAD_REQUEST
-        )
-
-class BinanceAPIError(BeenCoinException):
-    """Binance API 에러"""
-    def __init__(self, detail: str = "외부 API 오류"):
-        super().__init__(detail, status.HTTP_503_SERVICE_UNAVAILABLE)
+        detail = f"지원하지 않는 심볼입니다: {symbol}"
+        super().__init__(detail, 400, "INVALID_SYMBOL")
 
 
-# 전역 에러 핸들러 등록
-def register_error_handlers(app):
+class PositionNotFoundError(BeenCoinException):
+    """포지션 없음"""
+    def __init__(self, position_id: str = None):
+        detail = f"포지션을 찾을 수 없습니다" + (f" (ID: {position_id})" if position_id else "")
+        super().__init__(detail, 404, "POSITION_NOT_FOUND")
+
+
+class AccountNotFoundError(BeenCoinException):
+    """계정 없음"""
+    def __init__(self):
+        super().__init__("계정을 찾을 수 없습니다", 404, "ACCOUNT_NOT_FOUND")
+
+
+class UnauthorizedError(BeenCoinException):
+    """인증 오류"""
+    def __init__(self, detail: str = "인증이 필요합니다"):
+        super().__init__(detail, 401, "UNAUTHORIZED")
+
+
+class ForbiddenError(BeenCoinException):
+    """권한 오류"""
+    def __init__(self, detail: str = "권한이 없습니다"):
+        super().__init__(detail, 403, "FORBIDDEN")
+
+
+class MarketDataError(BeenCoinException):
+    """시장 데이터 오류"""
+    def __init__(self, detail: str = "시장 데이터를 가져올 수 없습니다"):
+        super().__init__(detail, 503, "MARKET_DATA_ERROR")
+
+
+# ================================
+# 에러 핸들러 등록 함수
+# ================================
+
+def register_error_handlers(app: FastAPI):
     """FastAPI 앱에 에러 핸들러 등록"""
     
     @app.exception_handler(BeenCoinException)
     async def beencoin_exception_handler(request: Request, exc: BeenCoinException):
-        """커스텀 예외 처리"""
+        """커스텀 예외 핸들러"""
+        logger.warning(f"⚠️ {exc.error_code}: {exc.detail}")
         return JSONResponse(
             status_code=exc.status_code,
             content={
-                "error": exc.__class__.__name__,
-                "detail": exc.message,
-                "path": str(request.url)
+                "error": exc.error_code,
+                "detail": exc.detail,
+                "success": False
             }
         )
     
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(
-        request: Request, 
-        exc: RequestValidationError
-    ):
-        """요청 검증 에러 처리"""
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        """요청 검증 오류 핸들러"""
         errors = []
         for error in exc.errors():
+            field = " -> ".join(str(loc) for loc in error["loc"])
             errors.append({
-                "field": " -> ".join(str(x) for x in error["loc"]),
+                "field": field,
                 "message": error["msg"],
                 "type": error["type"]
             })
         
+        logger.warning(f"⚠️ Validation Error: {errors}")
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "error": "ValidationError",
-                "detail": "입력값 검증 실패",
-                "errors": errors
+                "detail": "요청 데이터가 올바르지 않습니다",
+                "errors": errors,
+                "success": False
             }
         )
     
-    @app.exception_handler(IntegrityError)
-    async def integrity_error_handler(request: Request, exc: IntegrityError):
-        """데이터베이스 무결성 에러 처리"""
-        error_msg = "데이터베이스 오류"
-        
-        if "UNIQUE constraint failed" in str(exc):
-            error_msg = "이미 존재하는 데이터입니다"
-        elif "FOREIGN KEY constraint failed" in str(exc):
-            error_msg = "참조 데이터가 존재하지 않습니다"
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+        """HTTP 예외 핸들러"""
+        error_messages = {
+            400: "잘못된 요청입니다",
+            401: "인증이 필요합니다",
+            403: "권한이 없습니다",
+            404: "리소스를 찾을 수 없습니다",
+            405: "허용되지 않은 메서드입니다",
+            500: "서버 내부 오류가 발생했습니다",
+        }
         
         return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=exc.status_code,
             content={
-                "error": "IntegrityError",
-                "detail": error_msg
-            }
-        )
-    
-    @app.exception_handler(InvalidOperation)
-    async def decimal_error_handler(request: Request, exc: InvalidOperation):
-        """Decimal 연산 에러 처리"""
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={
-                "error": "InvalidOperation",
-                "detail": "잘못된 숫자 형식입니다"
+                "error": f"HTTP{exc.status_code}Error",
+                "detail": exc.detail or error_messages.get(exc.status_code, "오류가 발생했습니다"),
+                "success": False
             }
         )
     
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
-        """일반 예외 처리 (500 에러)"""
-        # 에러 로깅
-        print("=" * 60)
-        print("❌ Unhandled Exception")
-        print("=" * 60)
-        traceback.print_exc()
-        print("=" * 60)
+        """일반 예외 핸들러"""
+        logger.error(f"❌ Unhandled Exception: {str(exc)}")
+        logger.error(traceback.format_exc())
         
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "error": "InternalServerError",
                 "detail": "서버 내부 오류가 발생했습니다",
-                "message": str(exc) if __debug__ else None
+                "success": False
             }
         )
+    
+    logger.info("✅ 에러 핸들러 등록 완료")
 
 
 # ================================
-# app/main.py에 추가
+# 유틸리티 함수
 # ================================
-from app.utils.error_handlers import register_error_handlers
 
-app = FastAPI(...)
-
-# 에러 핸들러 등록
-register_error_handlers(app)
-
-
-# ================================
-# app/services/order_service.py 에러 처리 개선
-# ================================
-from app.utils.error_handlers import (
-    InsufficientBalanceError,
-    InsufficientQuantityError,
-    InvalidSymbolError
-)
-
-async def create_order(session: Session, user_id: str, order_data: OrderCreate) -> Order:
-    # 심볼 검증
-    if order_data.symbol not in settings.SUPPORTED_SYMBOLS:
-        raise InvalidSymbolError(order_data.symbol)
+def create_error_response(
+    status_code: int,
+    error: str,
+    detail: str,
+    errors: list = None
+) -> JSONResponse:
+    """에러 응답 생성 헬퍼"""
+    content = {
+        "error": error,
+        "detail": detail,
+        "success": False
+    }
+    if errors:
+        content["errors"] = errors
     
-    # ... 주문 생성 로직
-    
-def update_position(
-    session: Session, 
-    user_id: str, 
-    symbol: str, 
-    side: str, 
-    quantity: Decimal, 
-    price: Decimal, 
-    fee: Decimal
-):
-    account = session.exec(
-        select(TradingAccount).where(TradingAccount.user_id == user_id)
-    ).first()
-    
-    if not account:
-        raise BeenCoinException("계정을 찾을 수 없습니다", 404)
-    
-    # ... 포지션 처리
-    
-    if side == 'BUY':
-        net_cost = (price * quantity) + fee
-        if account.balance < net_cost:
-            raise InsufficientBalanceError()
-        # ... 매수 처리
-        
-    elif side == 'SELL':
-        if position.quantity < quantity:
-            raise InsufficientQuantityError()
-        # ... 매도 처리
+    return JSONResponse(status_code=status_code, content=content)
