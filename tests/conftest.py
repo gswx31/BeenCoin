@@ -1,7 +1,7 @@
 # ============================================================================
 # 파일: tests/conftest.py
 # ============================================================================
-# BeenCoin 테스트 Fixture - 로그 저장 기능 추가
+# BeenCoin 테스트 Fixture - CI 환경 Binance API Mock 추가
 # ============================================================================
 
 """
@@ -9,6 +9,7 @@
 1. 공유 DB 엔진 (client와 db_session이 동일한 DB 사용)
 2. 테스트 로그 파일 저장
 3. 유효한 사용자명 생성 (영문+숫자만)
+4. ✅ CI 환경에서 Binance API Mock 처리 (NEW!)
 """
 
 import pytest
@@ -75,6 +76,189 @@ def setup_logging():
 # 로그 파일 경로 저장
 LOG_FILE = setup_logging()
 logger = logging.getLogger("tests.conftest")
+
+
+# =============================================================================
+# ✅ CI 환경 감지 및 Binance API Mock (NEW!)
+# =============================================================================
+
+def is_ci_environment() -> bool:
+    """CI 환경인지 확인"""
+    return any([
+        os.getenv("CI") == "true",
+        os.getenv("GITHUB_ACTIONS") == "true",
+        os.getenv("GITLAB_CI") == "true",
+        os.getenv("JENKINS_URL") is not None,
+        os.getenv("MOCK_BINANCE", "").lower() == "true",
+    ])
+
+
+class MockBinanceData:
+    """Binance API Mock 응답 데이터"""
+    
+    PRICES = {
+        "BTCUSDT": "97000.00",
+        "ETHUSDT": "3400.00",
+        "BNBUSDT": "650.00",
+        "ADAUSDT": "0.95",
+        "XRPUSDT": "2.20",
+        "SOLUSDT": "240.00",
+        "DOGEUSDT": "0.40",
+        "DOTUSDT": "8.50",
+    }
+    
+    @classmethod
+    def get_price(cls, symbol: str) -> str:
+        return cls.PRICES.get(symbol, "100.00")
+    
+    @classmethod
+    def ticker_24hr(cls, symbol: str) -> dict:
+        price = cls.get_price(symbol)
+        return {
+            "symbol": symbol,
+            "priceChange": "1500.00",
+            "priceChangePercent": "2.35",
+            "lastPrice": price,
+            "volume": "25000.00",
+            "highPrice": str(float(price) * 1.03),
+            "lowPrice": str(float(price) * 0.97),
+            "quoteVolume": "2500000000.00",
+        }
+    
+    @classmethod
+    def ticker_price(cls, symbol: str) -> dict:
+        return {"symbol": symbol, "price": cls.get_price(symbol)}
+    
+    @classmethod
+    def all_ticker_prices(cls) -> list:
+        return [{"symbol": s, "price": p} for s, p in cls.PRICES.items()]
+    
+    @classmethod
+    def klines(cls, symbol: str, limit: int = 24) -> list:
+        base_time = int(datetime.now().timestamp() * 1000)
+        base_price = float(cls.get_price(symbol))
+        return [
+            [
+                base_time - (i * 3600000),
+                str(base_price * (1 + random.uniform(-0.02, 0.02))),
+                str(base_price * 1.02),
+                str(base_price * 0.98),
+                str(base_price * (1 + random.uniform(-0.01, 0.01))),
+                "1000.00",
+                base_time - (i * 3600000) + 3599999,
+                "50000000.00",
+                100,
+                "500.00",
+                "25000000.00",
+                "0"
+            ]
+            for i in range(limit)
+        ]
+    
+    @classmethod
+    def recent_trades(cls, symbol: str, limit: int = 20) -> list:
+        base_price = float(cls.get_price(symbol))
+        base_time = int(datetime.now().timestamp() * 1000)
+        return [
+            {
+                "id": 12345678 + i,
+                "price": str(base_price * (1 + random.uniform(-0.001, 0.001))),
+                "qty": str(round(random.uniform(0.001, 0.1), 6)),
+                "time": base_time - (i * 1000),
+                "isBuyerMaker": i % 2 == 0,
+                "isBestMatch": True
+            }
+            for i in range(limit)
+        ]
+    
+    @classmethod
+    def order_book(cls, symbol: str, limit: int = 10) -> dict:
+        base_price = float(cls.get_price(symbol))
+        return {
+            "lastUpdateId": 123456789,
+            "bids": [[str(base_price * (1 - 0.001 * i)), str(round(random.uniform(0.1, 2.0), 4))] for i in range(limit)],
+            "asks": [[str(base_price * (1 + 0.001 * i)), str(round(random.uniform(0.1, 2.0), 4))] for i in range(limit)]
+        }
+
+
+class MockHttpxResponse:
+    """httpx Response Mock"""
+    def __init__(self, json_data, status_code: int = 200):
+        self._json_data = json_data
+        self.status_code = status_code
+    
+    def json(self):
+        return self._json_data
+    
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise Exception(f"HTTP Error: {self.status_code}")
+
+
+@pytest.fixture(autouse=True)
+def mock_binance_api_in_ci(monkeypatch):
+    """CI 환경에서 Binance API 자동 Mock"""
+    
+    if not is_ci_environment():
+        logger.debug("🌐 로컬 환경: 실제 Binance API 사용")
+        yield
+        return
+    
+    logger.info("🔧 CI 환경 감지: Binance API Mock 적용")
+    
+    import httpx
+    
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        async def __aenter__(self):
+            return self
+        
+        async def __aexit__(self, *args):
+            pass
+        
+        async def get(self, url: str, params: dict = None, **kwargs):
+            params = params or {}
+            symbol = params.get("symbol", "BTCUSDT")
+            
+            if "ticker/24hr" in url:
+                if symbol:
+                    return MockHttpxResponse(MockBinanceData.ticker_24hr(symbol))
+                return MockHttpxResponse([MockBinanceData.ticker_24hr(s) for s in MockBinanceData.PRICES])
+            
+            elif "ticker/price" in url:
+                if symbol:
+                    return MockHttpxResponse(MockBinanceData.ticker_price(symbol))
+                return MockHttpxResponse(MockBinanceData.all_ticker_prices())
+            
+            elif "klines" in url:
+                limit = int(params.get("limit", 24))
+                return MockHttpxResponse(MockBinanceData.klines(symbol, limit))
+            
+            elif "trades" in url:
+                limit = int(params.get("limit", 20))
+                return MockHttpxResponse(MockBinanceData.recent_trades(symbol, limit))
+            
+            elif "depth" in url:
+                limit = int(params.get("limit", 10))
+                return MockHttpxResponse(MockBinanceData.order_book(symbol, limit))
+            
+            elif "ping" in url:
+                return MockHttpxResponse({})
+            
+            elif "time" in url:
+                return MockHttpxResponse({"serverTime": int(datetime.now().timestamp() * 1000)})
+            
+            return MockHttpxResponse({})
+        
+        async def post(self, url: str, **kwargs):
+            return MockHttpxResponse({"status": "ok"})
+    
+    monkeypatch.setattr("httpx.AsyncClient", MockAsyncClient)
+    logger.info("✅ Binance API Mock 적용 완료")
+    yield
+    logger.info("🔄 Binance API Mock 해제")
 
 
 # =============================================================================
@@ -309,6 +493,12 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "api: API 테스트")
     config.addinivalue_line("markers", "e2e: End-to-End 테스트")
     config.addinivalue_line("markers", "slow: 느린 테스트")
+    
+    # CI 환경 정보 출력
+    if is_ci_environment():
+        logger.info("🔧 CI 환경 감지됨 - Binance API Mock 활성화")
+    else:
+        logger.info("💻 로컬 환경 - 실제 Binance API 사용")
     
     logger.info("=" * 70)
     logger.info("🧪 BeenCoin 테스트 시작")

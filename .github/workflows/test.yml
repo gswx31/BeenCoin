@@ -1,7 +1,7 @@
 # ============================================================================
 # 파일: .github/workflows/test.yml
 # ============================================================================
-# GitHub Actions CI/CD 워크플로우
+# GitHub Actions CI/CD 워크플로우 (Binance API Mock 포함)
 # ============================================================================
 
 name: BeenCoin Tests
@@ -19,6 +19,9 @@ env:
   ACCESS_TOKEN_EXPIRE_MINUTES: '1440'
   INITIAL_BALANCE: '1000000'
   LOG_LEVEL: 'INFO'
+  # ✅ CI 환경에서 Binance API Mock 활성화
+  CI: true
+  MOCK_BINANCE: true
 
 jobs:
   # ============================================
@@ -79,6 +82,9 @@ jobs:
       - name: Run unit tests
         run: |
           pytest tests/unit/ -v --tb=short --junitxml=junit/unit-results.xml
+        env:
+          CI: true
+          MOCK_BINANCE: true
       
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -88,7 +94,7 @@ jobs:
           path: junit/unit-results.xml
 
   # ============================================
-  # 통합 테스트
+  # 통합 테스트 (Binance API Mock 적용)
   # ============================================
   integration-tests:
     name: Integration Tests
@@ -115,6 +121,8 @@ jobs:
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           SECRET_KEY: ${{ env.SECRET_KEY }}
+          CI: true
+          MOCK_BINANCE: true
       
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -151,6 +159,8 @@ jobs:
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           SECRET_KEY: ${{ env.SECRET_KEY }}
+          CI: true
+          MOCK_BINANCE: true
       
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -181,6 +191,8 @@ jobs:
           echo "=============================================="
           echo "Unit Tests: ${{ needs.unit-tests.result }}"
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo ""
+          echo "📝 Note: Binance API is mocked in CI environment"
           echo "=============================================="
           
           if [ "${{ needs.unit-tests.result }}" == "failure" ] || \
