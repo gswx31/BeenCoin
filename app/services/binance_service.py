@@ -49,13 +49,26 @@ class MockBinanceData:
         "DOGEUSDT": "0.35"
     }
     
-    @classmethod
-    def get_price(cls, symbol: str) -> str:
-        return cls.PRICES.get(symbol, "100.00")
+    # 지원하는 심볼 목록
+    SUPPORTED_SYMBOLS = set(PRICES.keys())
     
     @classmethod
-    def get_ticker_24hr(cls, symbol: str) -> dict:
-        price = float(cls.get_price(symbol))
+    def is_valid_symbol(cls, symbol: str) -> bool:
+        """유효한 심볼인지 확인"""
+        return symbol in cls.SUPPORTED_SYMBOLS
+    
+    @classmethod
+    def get_price(cls, symbol: str) -> Optional[str]:
+        """가격 조회 - 유효하지 않은 심볼은 None 반환"""
+        return cls.PRICES.get(symbol)
+    
+    @classmethod
+    def get_ticker_24hr(cls, symbol: str) -> Optional[dict]:
+        """24시간 티커 - 유효하지 않은 심볼은 None 반환"""
+        price_str = cls.get_price(symbol)
+        if price_str is None:
+            return None
+        price = float(price_str)
         return {
             "symbol": symbol,
             "lastPrice": str(price),
@@ -80,8 +93,11 @@ class MockBinanceData:
     
     @classmethod
     def get_recent_trades(cls, symbol: str, limit: int = 100) -> List[Dict]:
-        """Mock 체결 내역 생성"""
-        base_price = float(cls.get_price(symbol))
+        """Mock 체결 내역 생성 - 유효하지 않은 심볼은 빈 리스트 반환"""
+        price_str = cls.get_price(symbol)
+        if price_str is None:
+            return []
+        base_price = float(price_str)
         trades = []
         base_time = datetime.utcnow()
         
@@ -103,8 +119,11 @@ class MockBinanceData:
     
     @classmethod
     def get_order_book(cls, symbol: str, limit: int = 20) -> Dict:
-        """Mock 호가창 생성"""
-        base_price = float(cls.get_price(symbol))
+        """Mock 호가창 생성 - 유효하지 않은 심볼은 빈 호가창 반환"""
+        price_str = cls.get_price(symbol)
+        if price_str is None:
+            return {"bids": [], "asks": []}
+        base_price = float(price_str)
         
         bids = []
         asks = []
@@ -124,8 +143,11 @@ class MockBinanceData:
     
     @classmethod
     def get_klines(cls, symbol: str, interval: str = "1h", limit: int = 100) -> List[Dict]:
-        """Mock 캔들스틱 데이터 생성"""
-        base_price = float(cls.get_price(symbol))
+        """Mock 캔들스틱 데이터 생성 - 유효하지 않은 심볼은 빈 리스트 반환"""
+        price_str = cls.get_price(symbol)
+        if price_str is None:
+            return []
+        base_price = float(price_str)
         klines = []
         
         # 인터벌에 따른 시간 간격 (분 단위)
@@ -180,6 +202,9 @@ async def get_current_price(symbol: str) -> Decimal:
     # ✅ CI 환경이면 Mock 반환
     if is_ci_environment():
         price = MockBinanceData.get_price(symbol)
+        if price is None:
+            logger.error(f"🔧 [CI Mock] 유효하지 않은 심볼: {symbol}")
+            raise HTTPException(status_code=400, detail=f"Invalid symbol: {symbol}")
         logger.info(f"🔧 [CI Mock] 현재가: {symbol} = ${price}")
         return Decimal(price)
     
@@ -596,6 +621,9 @@ async def get_24h_ticker(symbol: str) -> Optional[Dict]:
     # ✅ CI 환경이면 Mock 반환
     if is_ci_environment():
         ticker = MockBinanceData.get_ticker_24hr(symbol)
+        if ticker is None:
+            logger.warning(f"🔧 [CI Mock] 유효하지 않은 심볼: {symbol}")
+            return None
         logger.info(f"🔧 [CI Mock] 24h 티커: {symbol}")
         return ticker
     
@@ -638,6 +666,14 @@ async def get_coin_info(symbol: str) -> Dict:
     Returns:
         Dict: 코인 정보
     """
+    # ✅ CI 환경에서 유효하지 않은 심볼 체크
+    if is_ci_environment() and not MockBinanceData.is_valid_symbol(symbol):
+        logger.warning(f"🔧 [CI Mock] 지원하지 않는 심볼: {symbol}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid symbol: {symbol}"
+        )
+    
     try:
         ticker = await get_24h_ticker(symbol)
         
@@ -662,6 +698,8 @@ async def get_coin_info(symbol: str) -> Dict:
                 "low": "0"
             }
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ 코인 정보 조회 실패: {symbol} - {e}")
         raise HTTPException(
