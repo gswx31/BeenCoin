@@ -239,10 +239,13 @@ class TestMarketAPI:
         data = response.json()
         assert data["symbol"] == "ETHUSDT"
     
-    def test_get_invalid_coin(self, client: TestClient):
-        """존재하지 않는 코인 조회"""
+    def test_get_invalid_coin(self, client):
+        """존재하지 않는 코인 조회 테스트"""
         response = client.get("/api/v1/market/coin/INVALIDCOIN")
-        assert response.status_code in [404, 500, 503]
+        # 400: 잘못된 심볼 (CI Mock)
+        # 404: 찾을 수 없음
+        # 500/503: 서버/서비스 오류
+        assert response.status_code in [400, 404, 500, 503]
     
     def test_get_historical_data(self, client: TestClient):
         """과거 가격 데이터 조회"""
