@@ -72,27 +72,27 @@ class TestAuthBranches:
         
         assert response.status_code == 401
 
-    def test_me_endpoint_with_valid_token(self, client, auth_headers):
-        """유효한 토큰으로 /me 접근"""
+    def test_protected_endpoint_with_valid_token(self, client, auth_headers):
+        """유효한 토큰으로 보호된 엔드포인트 접근"""
         wait_for_api()
-        response = client.get("/api/v1/auth/me", headers=auth_headers)
+        response = client.get("/api/v1/futures/account", headers=auth_headers)
         
         assert response.status_code == 200
         data = response.json()
-        assert "username" in data
+        assert "balance" in data
 
-    def test_me_endpoint_without_token(self, client):
-        """토큰 없이 /me 접근 - 인증 실패 분기"""
+    def test_protected_endpoint_without_token(self, client):
+        """토큰 없이 보호된 엔드포인트 접근 - 인증 실패 분기"""
         wait_for_api()
-        response = client.get("/api/v1/auth/me")
+        response = client.get("/api/v1/futures/account")
         
         assert response.status_code in [401, 403]
 
-    def test_me_endpoint_with_invalid_token(self, client):
-        """잘못된 토큰으로 /me 접근"""
+    def test_protected_endpoint_with_invalid_token(self, client):
+        """잘못된 토큰으로 보호된 엔드포인트 접근"""
         wait_for_api()
         response = client.get(
-            "/api/v1/auth/me",
+            "/api/v1/futures/account",
             headers={"Authorization": "Bearer invalid_token_123"}
         )
         
