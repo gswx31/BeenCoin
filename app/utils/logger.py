@@ -7,6 +7,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+
 from app.core.config import settings
 
 # 로그 디렉토리 생성
@@ -17,20 +18,21 @@ LOG_DIR.mkdir(exist_ok=True)
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+
 def setup_logger(name: str) -> logging.Logger:
     """
     애플리케이션 로거 설정
-    
+
     Args:
         name: 로거 이름 (보통 __name__ 사용)
-    
+
     Returns:
         설정된 Logger 인스턴스
-    
+
     사용법:
         from app.utils.logger import setup_logger
         logger = setup_logger(__name__)
-        
+
         logger.info("정보 로그")
         logger.warning("경고 로그")
         logger.error("에러 로그")
@@ -38,45 +40,34 @@ def setup_logger(name: str) -> logging.Logger:
     """
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, settings.LOG_LEVEL))
-    
+
     # 핸들러가 이미 있으면 추가하지 않음 (중복 방지)
     if logger.handlers:
         return logger
-    
+
     # 1. 콘솔 핸들러 (터미널 출력)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(
-        logging.Formatter(LOG_FORMAT, DATE_FORMAT)
-    )
-    
+    console_handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
+
     # 2. 일반 로그 파일 핸들러 (일별 로그)
     today = datetime.now().strftime("%Y-%m-%d")
-    file_handler = logging.FileHandler(
-        LOG_DIR / f"app_{today}.log",
-        encoding="utf-8"
-    )
+    file_handler = logging.FileHandler(LOG_DIR / f"app_{today}.log", encoding="utf-8")
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(
-        logging.Formatter(LOG_FORMAT, DATE_FORMAT)
-    )
-    
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
+
     # 3. 에러 로그 파일 핸들러 (ERROR 이상만 별도 저장)
-    error_handler = logging.FileHandler(
-        LOG_DIR / f"error_{today}.log",
-        encoding="utf-8"
-    )
+    error_handler = logging.FileHandler(LOG_DIR / f"error_{today}.log", encoding="utf-8")
     error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(
-        logging.Formatter(LOG_FORMAT, DATE_FORMAT)
-    )
-    
+    error_handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
+
     # 핸들러 추가
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
     logger.addHandler(error_handler)
-    
+
     return logger
+
 
 # 기본 로거 (import하여 바로 사용 가능)
 logger = setup_logger("beencoin")

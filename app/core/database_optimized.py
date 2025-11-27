@@ -4,8 +4,9 @@
 """
 데이터베이스 성능 최적화
 """
-from sqlmodel import create_engine
 from sqlalchemy.pool import QueuePool
+from sqlmodel import create_engine
+
 from app.core.config import settings
 
 # Connection Pool 최적화
@@ -20,6 +21,8 @@ engine = create_engine(
     pool_pre_ping=True,  # 연결 상태 확인
     connect_args={
         "check_same_thread": False,  # SQLite용
-        "timeout": 30  # SQLite용
-    } if "sqlite" in settings.DATABASE_URL else {}
+        "timeout": 30,  # SQLite용
+    }
+    if "sqlite" in settings.DATABASE_URL
+    else {},
 )
