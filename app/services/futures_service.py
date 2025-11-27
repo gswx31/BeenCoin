@@ -10,9 +10,9 @@
 4. 청산 로직 개선
 """
 
-import logging
 from datetime import datetime
 from decimal import Decimal
+import logging
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -25,10 +25,7 @@ from app.models.futures import (
     FuturesPositionStatus,
     FuturesTransaction,
 )
-from app.services.binance_service import (
-    execute_market_order_with_real_trades,
-    get_current_price,
-)
+from app.services.binance_service import execute_market_order_with_real_trades, get_current_price
 
 logger = logging.getLogger(__name__)
 

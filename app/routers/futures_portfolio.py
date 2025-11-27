@@ -10,8 +10,8 @@
 4. 거래 통계
 """
 
-import logging
 from datetime import datetime, timedelta
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query  # ⭐ HTTPException 추가
 from pydantic import BaseModel
@@ -272,54 +272,54 @@ async def get_position_fills(
 # =====================================================
 
 
-@router.get("/fills/{position_id}", response_model=list[FillDetail])
-async def get_position_fills(
-    position_id: str,
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session),
-):
-    """
-    특정 포지션의 체결 내역 조회
+# @router.get("/fills/{position_id}", response_model=list[FillDetail])
+# async def get_position_fills(
+#     position_id: str,
+#     current_user: User = Depends(get_current_user),
+#     session: Session = Depends(get_session),
+# ):
+#     """
+#     특정 포지션의 체결 내역 조회
 
-    - 분할 체결된 모든 내역 표시
-    - 가격, 수량, 시간 포함
-    """
-    try:
-        # 포지션 확인
-        position = session.get(FuturesPosition, position_id)
-        if not position:
-            return []
+#     - 분할 체결된 모든 내역 표시
+#     - 가격, 수량, 시간 포함
+#     """
+#     try:
+#         # 포지션 확인
+#         position = session.get(FuturesPosition, position_id)
+#         if not position:
+#             return []
 
-        # 권한 확인
-        account = session.get(FuturesAccount, position.account_id)
-        if account.user_id != current_user.id:
-            return []
+#         # 권한 확인
+#         account = session.get(FuturesAccount, position.account_id)
+#         if account.user_id != current_user.id:
+#             return []
 
-        # 거래 내역 조회
-        transactions = session.exec(
-            select(FuturesTransaction)
-            .where(FuturesTransaction.position_id == position_id)
-            .order_by(FuturesTransaction.timestamp.asc())
-        ).all()
+#         # 거래 내역 조회
+#         transactions = session.exec(
+#             select(FuturesTransaction)
+#             .where(FuturesTransaction.position_id == position_id)
+#             .order_by(FuturesTransaction.timestamp.asc())
+#         ).all()
 
-        # 체결 내역 파싱
-        # TODO: 실제로는 포지션 개설 시 분할 체결 정보를 별도 테이블에 저장해야 함
-        fills = []
-        for tx in transactions:
-            if tx.action in ["OPEN", "LIMIT_FILLED"]:
-                fills.append(
-                    FillDetail(
-                        price=float(tx.price),
-                        quantity=float(tx.quantity),
-                        timestamp=tx.timestamp.isoformat(),
-                    )
-                )
+#         # 체결 내역 파싱
+#         # TODO: 실제로는 포지션 개설 시 분할 체결 정보를 별도 테이블에 저장해야 함
+#         fills = []
+#         for tx in transactions:
+#             if tx.action in ["OPEN", "LIMIT_FILLED"]:
+#                 fills.append(
+#                     FillDetail(
+#                         price=float(tx.price),
+#                         quantity=float(tx.quantity),
+#                         timestamp=tx.timestamp.isoformat(),
+#                     )
+#                 )
 
-        return fills
+#         return fills
 
-    except Exception as e:
-        logger.error(f"❌ 체결 내역 조회 실패: {e}")
-        raise
+#     except Exception as e:
+#         logger.error(f"❌ 체결 내역 조회 실패: {e}")
+#         raise
 
 
 # =====================================================

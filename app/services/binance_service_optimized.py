@@ -4,8 +4,8 @@
 """
 성능 최적화된 Binance 서비스
 """
-import logging
 from decimal import Decimal
+import logging
 
 import httpx
 

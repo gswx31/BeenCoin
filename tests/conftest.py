@@ -12,17 +12,17 @@
 4. ✅ CI 환경에서 Binance API Mock 처리 (NEW!)
 """
 
+from collections.abc import Callable, Generator
+from datetime import datetime, timedelta
 import logging
 import os
+from pathlib import Path
 import random
 import string
 import sys
-from collections.abc import Callable, Generator
-from datetime import datetime, timedelta
-from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 

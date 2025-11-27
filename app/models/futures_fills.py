@@ -6,9 +6,9 @@
 시장가 주문의 분할 체결 정보를 저장
 """
 
-import uuid
 from datetime import datetime
 from decimal import Decimal
+import uuid
 
 from sqlmodel import Field, SQLModel
 

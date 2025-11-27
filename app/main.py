@@ -9,14 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import create_db_and_tables
+from app.routers import auth, futures, market
 
 # ⭐ 라우터 import (선물 포트폴리오 추가)
-from app.routers import (
-    auth,
-    futures,
-    futures_portfolio,  # ⭐ NEW!
-    market,
-)
+from app.routers import futures_portfolio  # ⭐ NEW!
 from app.tasks.scheduler import start_all_background_tasks
 
 # 로깅 설정

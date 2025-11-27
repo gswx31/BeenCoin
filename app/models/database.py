@@ -2,11 +2,11 @@
 """
 데이터베이스 모델 정의 - UUID 보안 적용 버전
 """
-import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
+import uuid
 
 from sqlmodel import Field, Relationship, SQLModel
 

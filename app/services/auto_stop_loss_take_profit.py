@@ -4,9 +4,9 @@
 - 지정가 매수 체결 → 자동으로 손절/익절 주문 생성
 - OCO 주문: 손절 OR 익절 중 하나 체결 시 나머지 취소
 """
-import logging
 from datetime import datetime
 from decimal import Decimal
+import logging
 
 from sqlmodel import Session, select
 

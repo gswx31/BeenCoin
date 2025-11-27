@@ -2,9 +2,9 @@
 """
 가격 알림 API 라우터 (신규 기능)
 """
-import logging
 from datetime import datetime
 from decimal import Decimal
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field

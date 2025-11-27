@@ -2,10 +2,10 @@
 """
 선물 거래 데이터베이스 모델 - UUID 보안 적용
 """
-import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+import uuid
 
 from sqlmodel import Field, Relationship, SQLModel
 

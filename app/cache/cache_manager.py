@@ -4,8 +4,8 @@
 API 호출 횟수를 줄여 성능 향상
 """
 import logging
-import time
 from threading import Lock
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)

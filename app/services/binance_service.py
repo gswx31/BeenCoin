@@ -11,14 +11,14 @@ Binance API 서비스 - 실제 거래소 로직 구현
 5. ✅ CI/CD 환경 Mock 지원 (451 에러 방지)
 """
 
+from datetime import datetime, timedelta
+from decimal import Decimal
 import logging
 import os
 import random
-from datetime import datetime, timedelta
-from decimal import Decimal
 
-import httpx
 from fastapi import HTTPException
+import httpx
 
 logger = logging.getLogger(__name__)
 

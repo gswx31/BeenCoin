@@ -14,9 +14,9 @@
 6. 유틸리티 함수 테스트
 """
 
-import re
 from datetime import timedelta
 from decimal import Decimal
+import re
 
 import pytest
 

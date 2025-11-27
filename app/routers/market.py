@@ -1,11 +1,11 @@
 # app/routers/market.py
 import asyncio
+from datetime import datetime, timedelta
 import logging  # ✅ 추가
 import random
-from datetime import datetime, timedelta
 
-import httpx  # ✅ 추가
 from fastapi import APIRouter, HTTPException
+import httpx  # ✅ 추가
 
 from app.services.binance_service import get_coin_info, get_historical_data, get_multiple_prices
 
