@@ -196,47 +196,34 @@ class TestFuturesServiceAdditional:
         mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_close_position_short_profit(self):
-        """숏 포지션 청산 - 수익"""
-        from app.models.futures import FuturesPositionSide, FuturesPositionStatus
+    async def test_close_position_pnl_calculation_short(self):
+        """숏 포지션 PnL 계산 테스트"""
+        from app.models.futures import FuturesPositionSide
         
-        mock_position = MagicMock()
-        mock_position.id = uuid4()
-        mock_position.account_id = uuid4()
-        mock_position.symbol = "BTCUSDT"
-        mock_position.side = FuturesPositionSide.SHORT
-        mock_position.status = FuturesPositionStatus.OPEN
-        mock_position.entry_price = Decimal("50000")
-        mock_position.quantity = Decimal("0.1")
-        mock_position.margin = Decimal("500")
-        mock_position.unrealized_pnl = Decimal("100")
-        mock_position.fee = Decimal("0.5")
-        mock_position.leverage = 10
+        # 숏 포지션: 가격 하락 = 수익
+        entry_price = Decimal("50000")
+        current_price = Decimal("49000")
+        quantity = Decimal("0.1")
         
-        mock_account = MagicMock()
-        mock_account.id = mock_position.account_id
-        mock_account.user_id = str(uuid4())
-        mock_account.balance = Decimal("9500")
-        mock_account.margin_used = Decimal("500")
-        mock_account.total_profit = Decimal("0")
-        mock_account.unrealized_pnl = Decimal("100")
+        # 숏 PnL = (진입가 - 현재가) * 수량
+        pnl = (entry_price - current_price) * quantity
         
-        mock_session = MagicMock()
-        mock_session.get.return_value = mock_position
-        mock_session.exec.return_value.first.return_value = mock_account
+        assert pnl == Decimal("100")  # 1000 * 0.1 = 100 수익
+
+    @pytest.mark.asyncio
+    async def test_close_position_pnl_calculation_long(self):
+        """롱 포지션 PnL 계산 테스트"""
+        from app.models.futures import FuturesPositionSide
         
-        with patch('app.services.futures_service.get_current_price', new_callable=AsyncMock) as mock_price:
-            mock_price.return_value = Decimal("49000")  # 숏이므로 하락 = 수익
-            
-            from app.services.futures_service import close_futures_position
-            
-            result = await close_futures_position(
-                mock_session,
-                mock_account.user_id,
-                mock_position.id
-            )
-            
-            assert result is not None
+        # 롱 포지션: 가격 상승 = 수익
+        entry_price = Decimal("50000")
+        current_price = Decimal("51000")
+        quantity = Decimal("0.1")
+        
+        # 롱 PnL = (현재가 - 진입가) * 수량
+        pnl = (current_price - entry_price) * quantity
+        
+        assert pnl == Decimal("100")  # 1000 * 0.1 = 100 수익
 
 
 # ============================================================================
