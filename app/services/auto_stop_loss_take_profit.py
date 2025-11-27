@@ -286,9 +286,9 @@ async def check_and_create_missing_stop_loss_take_profit(session: Session, user_
                     session,
                     virtual_order,
                     stop_loss_percent=DEFAULT_STOP_LOSS_PERCENT if not has_stop_loss else None,
-                    take_profit_percent=DEFAULT_TAKE_PROFIT_PERCENT
-                    if not has_take_profit
-                    else None,
+                    take_profit_percent=(
+                        DEFAULT_TAKE_PROFIT_PERCENT if not has_take_profit else None
+                    ),
                 )
 
     except Exception as e:

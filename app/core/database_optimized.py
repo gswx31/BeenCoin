@@ -19,10 +19,12 @@ engine = create_engine(
     pool_timeout=30,  # 연결 대기 시간 (초)
     pool_recycle=3600,  # 연결 재활용 시간 (1시간)
     pool_pre_ping=True,  # 연결 상태 확인
-    connect_args={
-        "check_same_thread": False,  # SQLite용
-        "timeout": 30,  # SQLite용
-    }
-    if "sqlite" in settings.DATABASE_URL
-    else {},
+    connect_args=(
+        {
+            "check_same_thread": False,  # SQLite용
+            "timeout": 30,  # SQLite용
+        }
+        if "sqlite" in settings.DATABASE_URL
+        else {}
+    ),
 )

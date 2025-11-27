@@ -68,9 +68,7 @@ class FuturesAccountOut(BaseModel):
 
     class Config:
         from_attributes = True
-        json_encoders = {
-            Decimal: lambda v: float(v)  # Decimal을 float로 변환
-        }
+        json_encoders = {Decimal: lambda v: float(v)}  # Decimal을 float로 변환
 
 
 class FuturesPositionOut(BaseModel):

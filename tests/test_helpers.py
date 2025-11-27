@@ -139,9 +139,9 @@ class APITestHelper:
         )
         return {
             "response": response,
-            "position_id": response.json().get("id")
-            if response.status_code in [200, 201]
-            else None,
+            "position_id": (
+                response.json().get("id") if response.status_code in [200, 201] else None
+            ),
         }
 
     def close_position(self, position_id: str) -> dict:
