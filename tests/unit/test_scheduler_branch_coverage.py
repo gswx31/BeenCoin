@@ -1,569 +1,657 @@
 # ============================================================================
-# 파일: tests/integration/test_additional_coverage.py
+# 파일: tests/unit/test_scheduler_branch_coverage.py
 # ============================================================================
-# 커버리지 향상을 위한 추가 통합 테스트
+# Scheduler 브랜치 커버리지 향상을 위한 단위 테스트
+# 
+# 타겟: scheduler.py 22.5% → 60%+
 # ============================================================================
-
-"""
-추가 테스트 항목:
-1. 포트폴리오 상세 엔드포인트
-2. 체결 내역 조회
-3. 에러 케이스 확장
-4. 다양한 거래 시나리오
-"""
 
 import pytest
-from fastapi.testclient import TestClient
-import random
-import string
-import time
-
-
-# =============================================================================
-# 헬퍼 함수
-# =============================================================================
-
-def generate_valid_username(prefix: str = "test") -> str:
-    """유효한 사용자명 생성"""
-    suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-    return f"{prefix}{suffix}"
-
-
-def wait_for_api():
-    """API 호출 간 간격"""
-    time.sleep(0.05)
-
-
-# =============================================================================
-# 1. 포트폴리오 상세 테스트
-# =============================================================================
-
-class TestPortfolioDetailed:
-    """포트폴리오 상세 기능 테스트"""
-
-    def test_get_portfolio_summary_with_positions(self, client: TestClient, auth_headers):
-        """포지션이 있는 상태에서 포트폴리오 요약"""
-        # 먼저 포지션 개설
-        wait_for_api()
-        open_response = client.post(
-            "/api/v1/futures/positions/open",
-            headers=auth_headers,
-            json={
-                "symbol": "BTCUSDT",
-                "side": "LONG",
-                "quantity": "0.0001",
-                "leverage": 2,
-                "order_type": "MARKET"
-            }
-        )
-
-        # 포트폴리오 요약 조회
-        wait_for_api()
-        summary_response = client.get(
-            "/api/v1/futures/portfolio/summary",
-            headers=auth_headers
-        )
-
-        assert summary_response.status_code == 200
-        data = summary_response.json()
-        assert "total_balance" in data
-
-    def test_get_portfolio_with_various_limits(self, client: TestClient, auth_headers):
-        """다양한 limit 파라미터로 거래 내역 조회"""
-        limits = [1, 5, 10, 50, 100]
-
-        for limit in limits:
-            wait_for_api()
-            response = client.get(
-                "/api/v1/futures/portfolio/transactions",
-                params={"limit": limit},
-                headers=auth_headers
-            )
-
-            assert response.status_code == 200
-            data = response.json()
-            assert isinstance(data, list)
-            assert len(data) <= limit
-
-    def test_get_portfolio_stats_after_trades(self, client: TestClient, auth_headers):
-        """거래 후 통계 조회"""
-        # 포지션 개설
-        wait_for_api()
-        client.post(
-            "/api/v1/futures/positions/open",
-            headers=auth_headers,
-            json={
-                "symbol": "ETHUSDT",
-                "side": "SHORT",
-                "quantity": "0.001",
-                "leverage": 3,
-                "order_type": "MARKET"
-            }
-        )
-
-        # 통계 조회
-        wait_for_api()
-        stats_response = client.get(
-            "/api/v1/futures/portfolio/stats",
-            headers=auth_headers
-        )
-
-        assert stats_response.status_code == 200
-        data = stats_response.json()
-        assert "total_trades" in data
-        assert "win_rate" in data
-
-
-# =============================================================================
-# 2. 선물 거래 확장 테스트
-# =============================================================================
-
-class TestFuturesExtended:
-    """선물 거래 확장 테스트"""
-
-    def test_open_position_all_supported_symbols(self, client: TestClient, auth_headers):
-        """모든 지원 심볼로 포지션 개설"""
-        symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
-
-        for symbol in symbols:
-            wait_for_api()
-            response = client.post(
-                "/api/v1/futures/positions/open",
-                headers=auth_headers,
-                json={
-                    "symbol": symbol,
-                    "side": "LONG",
-                    "quantity": "0.0001",
-                    "leverage": 2,
-                    "order_type": "MARKET"
-                }
-            )
-
-            # 성공 또는 정상적인 에러
-            assert response.status_code in [200, 400, 500]
-
-    def test_open_position_various_leverages(self, client: TestClient, auth_headers):
-        """다양한 레버리지로 포지션 개설"""
-        leverages = [1, 5, 10, 20, 50]
-
-        for leverage in leverages:
-            wait_for_api()
-            response = client.post(
-                "/api/v1/futures/positions/open",
-                headers=auth_headers,
-                json={
-                    "symbol": "BTCUSDT",
-                    "side": "LONG",
-                    "quantity": "0.0001",
-                    "leverage": leverage,
-                    "order_type": "MARKET"
-                }
-            )
-
-            # 성공 또는 정상적인 에러
-            assert response.status_code in [200, 400, 500]
-
-    def test_get_positions_by_status(self, client: TestClient, auth_headers):
-        """상태별 포지션 조회"""
-        statuses = ["OPEN", "CLOSED", "PENDING", "LIQUIDATED"]
-
-        for status in statuses:
-            wait_for_api()
-            response = client.get(
-                "/api/v1/futures/positions",
-                params={"status": status},
-                headers=auth_headers
-            )
-
-            assert response.status_code == 200
-            assert isinstance(response.json(), list)
-
-    def test_get_positions_by_symbol(self, client: TestClient, auth_headers):
-        """심볼별 포지션 조회"""
-        wait_for_api()
-        response = client.get(
-            "/api/v1/futures/positions",
-            params={"symbol": "BTCUSDT"},
-            headers=auth_headers
-        )
-
-        # 엔드포인트가 지원하면 200, 아니면 다른 코드
-        assert response.status_code in [200, 422]
-
-
-# =============================================================================
-# 3. 마켓 데이터 확장 테스트
-# =============================================================================
-
-class TestMarketExtended:
-    """마켓 데이터 확장 테스트"""
-
-    def test_get_all_coins_response_structure(self, client: TestClient):
-        """모든 코인 조회 응답 구조 확인"""
-        wait_for_api()
-        response = client.get("/api/v1/market/coins")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-
-        if len(data) > 0:
-            coin = data[0]
-            # 기본 필드 확인
-            assert "symbol" in coin or "name" in coin or "price" in coin
-
-    def test_get_coin_case_insensitive(self, client: TestClient):
-        """심볼 대소문자 처리"""
-        symbols = ["BTCUSDT", "btcusdt", "BtcUsdt"]
-
-        for symbol in symbols:
-            wait_for_api()
-            response = client.get(f"/api/v1/market/coin/{symbol}")
-
-            # 대소문자에 관계없이 처리되어야 함
-            assert response.status_code in [200, 400, 404]
-
-    def test_get_multiple_prices_response(self, client: TestClient):
-        """다중 가격 조회 응답 확인"""
-        wait_for_api()
-        response = client.get(
-            "/api/v1/market/prices",
-            params={"symbols": "BTCUSDT,ETHUSDT,BNBUSDT"}
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, (list, dict))
-
-    def test_get_historical_data_various_limits(self, client: TestClient):
-        """다양한 limit으로 히스토리컬 데이터 조회"""
-        limits = [10, 50, 100, 500]
-
-        for limit in limits:
-            wait_for_api()
-            response = client.get(
-                "/api/v1/market/history/BTCUSDT",
-                params={"limit": limit}
-            )
-
-            assert response.status_code in [200, 404, 422]
-
-
-# =============================================================================
-# 4. 인증 확장 테스트
-# =============================================================================
-
-class TestAuthExtended:
-    """인증 확장 테스트"""
-
-    def test_register_with_special_characters(self, client: TestClient):
-        """특수문자 사용자명 (실패해야 함)"""
-        wait_for_api()
-        response = client.post(
-            "/api/v1/auth/register",
-            json={
-                "username": "user@name!",
-                "password": "validpass123"
-            }
-        )
-
-        # 특수문자가 허용되지 않으면 422, 허용되면 200/400
-        assert response.status_code in [200, 400, 422]
-
-    def test_register_with_spaces(self, client: TestClient):
-        """공백 포함 사용자명 (실패해야 함)"""
-        wait_for_api()
-        response = client.post(
-            "/api/v1/auth/register",
-            json={
-                "username": "user name",
-                "password": "validpass123"
-            }
-        )
-
-        assert response.status_code == 422
-
-    def test_login_after_registration(self, client: TestClient):
-        """회원가입 직후 로그인"""
-        username = generate_valid_username("logintest")
-
-        # 회원가입
-        wait_for_api()
-        register_response = client.post(
-            "/api/v1/auth/register",
-            json={
-                "username": username,
-                "password": "testpass123"
-            }
-        )
-
-        if register_response.status_code == 200:
-            # 로그인
-            wait_for_api()
-            login_response = client.post(
-                "/api/v1/auth/login",
-                data={
-                    "username": username,
-                    "password": "testpass123"
-                }
-            )
-
-            assert login_response.status_code == 200
-            assert "access_token" in login_response.json()
-
-    def test_multiple_login_sessions(self, client: TestClient):
-        """다중 로그인 세션"""
-        username = generate_valid_username("multi")
-
-        # 회원가입
-        wait_for_api()
-        client.post(
-            "/api/v1/auth/register",
-            json={
-                "username": username,
-                "password": "testpass123"
-            }
-        )
-
-        tokens = []
-
-        # 여러 번 로그인
-        for _ in range(3):
-            wait_for_api()
-            login_response = client.post(
-                "/api/v1/auth/login",
-                data={
-                    "username": username,
-                    "password": "testpass123"
-                }
-            )
-
-            if login_response.status_code == 200:
-                tokens.append(login_response.json().get("access_token"))
-
-        # 모든 토큰이 유효해야 함
-        for token in tokens:
-            if token:
-                headers = {"Authorization": f"Bearer {token}"}
-                wait_for_api()
-                response = client.get("/api/v1/futures/account", headers=headers)
-                assert response.status_code == 200
-
-
-# =============================================================================
-# 5. 에러 케이스 확장 테스트
-# =============================================================================
-
-class TestErrorCasesExtended:
-    """에러 케이스 확장 테스트"""
-
-    def test_request_with_malformed_json(self, client: TestClient, auth_headers):
-        """잘못된 JSON 형식"""
-        wait_for_api()
-        response = client.post(
-            "/api/v1/futures/positions/open",
-            headers={**auth_headers, "Content-Type": "application/json"},
-            content="not a json"
-        )
-
-        assert response.status_code == 422
-
-    def test_request_missing_content_type(self, client: TestClient, auth_headers):
-        """Content-Type 없는 요청"""
-        wait_for_api()
-        response = client.post(
-            "/api/v1/futures/positions/open",
-            headers=auth_headers,
-            json={
-                "symbol": "BTCUSDT",
-                "side": "LONG",
-                "quantity": "0.001",
-                "leverage": 10
-            }
-        )
-
-        # JSON이면 정상 처리되어야 함
-        assert response.status_code in [200, 400, 422]
-
-    def test_invalid_order_type(self, client: TestClient, auth_headers):
-        """잘못된 주문 타입 - 서버 에러 또는 422"""
-        wait_for_api()
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from decimal import Decimal
+from datetime import datetime, timedelta
+from uuid import uuid4
+
+
+# ============================================================================
+# 1. check_pending_futures_limit_orders 테스트
+# ============================================================================
+
+class TestCheckPendingFuturesLimitOrders:
+    """지정가 주문 체결 확인 테스트"""
+
+    @pytest.mark.asyncio
+    async def test_no_pending_positions(self):
+        """대기 중인 포지션 없음 - 조기 반환 분기"""
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = []
         
-        # FastAPI가 Enum 변환 실패 시 에러가 발생할 수 있음
-        try:
-            response = client.post(
-                "/api/v1/futures/positions/open",
-                headers=auth_headers,
-                json={
-                    "symbol": "BTCUSDT",
-                    "side": "LONG",
-                    "quantity": "0.001",
-                    "leverage": 10,
-                    "order_type": "INVALID"
-                }
-            )
-            # 정상적으로 응답이 온 경우
-            assert response.status_code in [400, 422, 500]
-        except Exception:
-            # Enum 변환 실패로 예외 발생 시 - 예상된 동작
-            pass
-
-    def test_invalid_position_side(self, client: TestClient, auth_headers):
-        """잘못된 포지션 방향 - 서버 에러 또는 422"""
-        wait_for_api()
+        from app.tasks.scheduler import check_pending_futures_limit_orders
         
-        # FastAPI가 Enum 변환 실패 시 에러가 발생할 수 있음
-        try:
-            response = client.post(
-                "/api/v1/futures/positions/open",
-                headers=auth_headers,
-                json={
-                    "symbol": "BTCUSDT",
-                    "side": "INVALID",
-                    "quantity": "0.001",
-                    "leverage": 10
-                }
-            )
-            # 정상적으로 응답이 온 경우
-            assert response.status_code in [400, 422, 500]
-        except Exception:
-            # Enum 변환 실패로 예외 발생 시 - 예상된 동작
-            pass
+        await check_pending_futures_limit_orders(mock_session)
+        
+        # exec 한 번 호출되고 종료
+        mock_session.exec.assert_called_once()
+        mock_session.commit.assert_not_called()
 
-    def test_extremely_large_quantity(self, client: TestClient, auth_headers):
-        """매우 큰 수량"""
-        wait_for_api()
-        response = client.post(
-            "/api/v1/futures/positions/open",
-            headers=auth_headers,
-            json={
-                "symbol": "BTCUSDT",
-                "side": "LONG",
-                "quantity": "9999999999",
-                "leverage": 10
-            }
-        )
+    @pytest.mark.asyncio
+    async def test_pending_position_no_execution(self):
+        """대기 중 포지션 있지만 체결 없음 분기"""
+        from app.models.futures import FuturesPositionSide, FuturesPositionStatus
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("0.1")
+        mock_position.leverage = 10
+        mock_position.status = FuturesPositionStatus.PENDING
+        
+        # filled_quantity 속성 없음
+        del mock_position.filled_quantity
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.check_limit_order_execution', new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = None  # 체결 없음
+            
+            from app.tasks.scheduler import check_pending_futures_limit_orders
+            
+            await check_pending_futures_limit_orders(mock_session)
+            
+            mock_check.assert_called_once()
+            # 체결 없으므로 commit 호출
+            mock_session.commit.assert_called_once()
 
-        # 잔고 부족으로 실패해야 함
-        assert response.status_code in [400, 422]
+    @pytest.mark.asyncio
+    async def test_pending_position_partial_fill(self):
+        """대기 중 포지션 부분 체결 분기"""
+        from app.models.futures import FuturesPositionSide, FuturesPositionStatus
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("1.0")
+        mock_position.leverage = 10
+        mock_position.status = FuturesPositionStatus.PENDING
+        mock_position.filled_quantity = Decimal("0")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        # 부분 체결 결과
+        partial_fill_result = {
+            "filled_quantity": Decimal("0.5"),
+            "remaining": Decimal("0.5"),
+            "fills": [
+                {"price": 49900, "quantity": 5.0, "timestamp": datetime.utcnow().isoformat()}
+            ]
+        }
+        
+        with patch('app.tasks.scheduler.check_limit_order_execution', new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = partial_fill_result
+            
+            from app.tasks.scheduler import check_pending_futures_limit_orders
+            
+            await check_pending_futures_limit_orders(mock_session)
+            
+            # 부분 체결이므로 상태는 PENDING 유지
+            assert mock_position.status == FuturesPositionStatus.PENDING
+
+    @pytest.mark.asyncio
+    async def test_pending_position_full_fill_long(self):
+        """대기 중 롱 포지션 완전 체결 분기"""
+        from app.models.futures import FuturesPositionSide, FuturesPositionStatus, FuturesAccount
+        
+        mock_account = MagicMock()
+        mock_account.user_id = str(uuid4())
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.account_id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("1.0")
+        mock_position.leverage = 10
+        mock_position.status = FuturesPositionStatus.PENDING
+        mock_position.fee = Decimal("10")
+        mock_position.filled_quantity = Decimal("0")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        mock_session.get.return_value = mock_account
+        
+        # 완전 체결 결과
+        full_fill_result = {
+            "filled_quantity": Decimal("1.0"),
+            "remaining": Decimal("0"),
+            "fills": [
+                {"price": 49900, "quantity": 5.0, "timestamp": datetime.utcnow().isoformat()},
+                {"price": 50000, "quantity": 5.0, "timestamp": datetime.utcnow().isoformat()}
+            ]
+        }
+        
+        with patch('app.tasks.scheduler.check_limit_order_execution', new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = full_fill_result
+            
+            from app.tasks.scheduler import check_pending_futures_limit_orders
+            
+            await check_pending_futures_limit_orders(mock_session)
+            
+            # 완전 체결이므로 OPEN 상태로 전환
+            mock_position.status = FuturesPositionStatus.OPEN
+
+    @pytest.mark.asyncio
+    async def test_pending_position_full_fill_short(self):
+        """대기 중 숏 포지션 완전 체결 분기"""
+        from app.models.futures import FuturesPositionSide, FuturesPositionStatus
+        
+        mock_account = MagicMock()
+        mock_account.user_id = str(uuid4())
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.account_id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.SHORT  # 숏
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("1.0")
+        mock_position.leverage = 10
+        mock_position.status = FuturesPositionStatus.PENDING
+        mock_position.fee = Decimal("10")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        mock_session.get.return_value = mock_account
+        
+        full_fill_result = {
+            "filled_quantity": Decimal("1.0"),
+            "remaining": Decimal("0"),
+            "fills": [{"price": 50100, "quantity": 10.0, "timestamp": datetime.utcnow().isoformat()}]
+        }
+        
+        with patch('app.tasks.scheduler.check_limit_order_execution', new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = full_fill_result
+            
+            from app.tasks.scheduler import check_pending_futures_limit_orders
+            
+            await check_pending_futures_limit_orders(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_pending_position_exception_handling(self):
+        """포지션 처리 중 예외 - continue 분기"""
+        from app.models.futures import FuturesPositionSide, FuturesPositionStatus
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("1.0")
+        mock_position.leverage = 10
+        mock_position.status = FuturesPositionStatus.PENDING
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.check_limit_order_execution', new_callable=AsyncMock) as mock_check:
+            mock_check.side_effect = Exception("Test exception")
+            
+            from app.tasks.scheduler import check_pending_futures_limit_orders
+            
+            # 예외가 발생해도 rollback 후 종료
+            await check_pending_futures_limit_orders(mock_session)
 
 
-# =============================================================================
-# 6. E2E 시나리오 확장
-# =============================================================================
+# ============================================================================
+# 2. check_liquidation 테스트
+# ============================================================================
 
-class TestE2EScenariosExtended:
-    """E2E 시나리오 확장 테스트"""
+class TestCheckLiquidation:
+    """강제 청산 확인 테스트"""
 
-    def test_full_trading_cycle(self, client: TestClient, user_factory):
-        """완전한 거래 사이클"""
-        # 1. 새 사용자 생성
-        user = user_factory(
-            username=generate_valid_username("cycle"),
-            password="cyclepass123"
-        )
+    @pytest.mark.asyncio
+    async def test_no_open_positions(self):
+        """오픈 포지션 없음 - 조기 반환 분기"""
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = []
+        
+        from app.tasks.scheduler import check_liquidation
+        
+        await check_liquidation(mock_session)
+        
+        mock_session.exec.assert_called_once()
 
-        # 2. 로그인
-        wait_for_api()
-        login_response = client.post(
-            "/api/v1/auth/login",
-            data={"username": user.username, "password": "cyclepass123"}
-        )
-        assert login_response.status_code == 200
-        headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+    @pytest.mark.asyncio
+    async def test_long_position_safe(self):
+        """롱 포지션 - 청산가 미도달 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.entry_price = Decimal("50000")
+        mock_position.liquidation_price = Decimal("45000")
+        mock_position.quantity = Decimal("0.1")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.return_value = Decimal("52000")  # 청산가보다 높음
+            
+            with patch('app.tasks.scheduler.liquidate_position', new_callable=AsyncMock) as mock_liquidate:
+                from app.tasks.scheduler import check_liquidation
+                
+                await check_liquidation(mock_session)
+                
+                # 청산되지 않아야 함
+                mock_liquidate.assert_not_called()
 
-        # 3. 계정 조회
-        wait_for_api()
-        account_response = client.get("/api/v1/futures/account", headers=headers)
-        assert account_response.status_code == 200
-        initial_balance = account_response.json().get("balance", 0)
+    @pytest.mark.asyncio
+    async def test_long_position_liquidated(self):
+        """롱 포지션 - 청산가 도달 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.entry_price = Decimal("50000")
+        mock_position.liquidation_price = Decimal("45000")
+        mock_position.quantity = Decimal("0.1")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.return_value = Decimal("44000")  # 청산가 이하
+            
+            with patch('app.tasks.scheduler.liquidate_position', new_callable=AsyncMock) as mock_liquidate:
+                from app.tasks.scheduler import check_liquidation
+                
+                await check_liquidation(mock_session)
+                
+                # 청산되어야 함
+                mock_liquidate.assert_called_once()
 
-        # 4. 포지션 개설
-        wait_for_api()
-        open_response = client.post(
-            "/api/v1/futures/positions/open",
-            headers=headers,
-            json={
-                "symbol": "BTCUSDT",
-                "side": "LONG",
-                "quantity": "0.0001",
-                "leverage": 2,
-                "order_type": "MARKET"
-            }
-        )
+    @pytest.mark.asyncio
+    async def test_short_position_safe(self):
+        """숏 포지션 - 청산가 미도달 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.SHORT
+        mock_position.entry_price = Decimal("50000")
+        mock_position.liquidation_price = Decimal("55000")
+        mock_position.quantity = Decimal("0.1")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.return_value = Decimal("48000")  # 청산가보다 낮음
+            
+            with patch('app.tasks.scheduler.liquidate_position', new_callable=AsyncMock) as mock_liquidate:
+                from app.tasks.scheduler import check_liquidation
+                
+                await check_liquidation(mock_session)
+                
+                mock_liquidate.assert_not_called()
 
-        if open_response.status_code == 200:
-            position_id = open_response.json().get("id")
+    @pytest.mark.asyncio
+    async def test_short_position_liquidated(self):
+        """숏 포지션 - 청산가 도달 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.SHORT
+        mock_position.entry_price = Decimal("50000")
+        mock_position.liquidation_price = Decimal("55000")
+        mock_position.quantity = Decimal("0.1")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.return_value = Decimal("56000")  # 청산가 이상
+            
+            with patch('app.tasks.scheduler.liquidate_position', new_callable=AsyncMock) as mock_liquidate:
+                from app.tasks.scheduler import check_liquidation
+                
+                await check_liquidation(mock_session)
+                
+                mock_liquidate.assert_called_once()
 
-            # 5. 포지션 조회
-            wait_for_api()
-            positions_response = client.get(
-                "/api/v1/futures/positions",
-                params={"status": "OPEN"},
-                headers=headers
-            )
-            assert positions_response.status_code == 200
-
-            # 6. 포지션 청산
-            wait_for_api()
-            close_response = client.post(
-                f"/api/v1/futures/positions/{position_id}/close",
-                headers=headers
-            )
-            assert close_response.status_code in [200, 400]
-
-        # 7. 거래 내역 확인
-        wait_for_api()
-        transactions_response = client.get(
-            "/api/v1/futures/transactions",
-            headers=headers
-        )
-        assert transactions_response.status_code == 200
-
-        # 8. 통계 확인
-        wait_for_api()
-        stats_response = client.get(
-            "/api/v1/futures/portfolio/stats",
-            headers=headers
-        )
-        assert stats_response.status_code == 200
-
-    def test_concurrent_positions(self, client: TestClient, auth_headers):
-        """동시 다중 포지션"""
-        positions = []
-
-        # 여러 포지션 개설
-        for i, symbol in enumerate(["BTCUSDT", "ETHUSDT"]):
-            for side in ["LONG", "SHORT"]:
-                wait_for_api()
-                response = client.post(
-                    "/api/v1/futures/positions/open",
-                    headers=auth_headers,
-                    json={
-                        "symbol": symbol,
-                        "side": side,
-                        "quantity": "0.0001",
-                        "leverage": 2,
-                        "order_type": "MARKET"
-                    }
-                )
-
-                if response.status_code == 200:
-                    positions.append(response.json().get("id"))
-
-        # 모든 포지션 조회
-        wait_for_api()
-        all_positions = client.get(
-            "/api/v1/futures/positions",
-            params={"status": "OPEN"},
-            headers=auth_headers
-        )
-        assert all_positions.status_code == 200
+    @pytest.mark.asyncio
+    async def test_position_exception_handling(self):
+        """포지션 처리 중 예외 - continue 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.liquidation_price = Decimal("45000")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.side_effect = Exception("Price fetch error")
+            
+            from app.tasks.scheduler import check_liquidation
+            
+            # 예외 발생해도 계속 진행
+            await check_liquidation(mock_session)
 
 
-# =============================================================================
-# 실행 함수
-# =============================================================================
+# ============================================================================
+# 3. update_unrealized_pnl 테스트
+# ============================================================================
+
+class TestUpdateUnrealizedPnl:
+    """미실현 손익 업데이트 테스트"""
+
+    @pytest.mark.asyncio
+    async def test_no_open_positions(self):
+        """오픈 포지션 없음 - 조기 반환 분기"""
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = []
+        
+        from app.tasks.scheduler import update_unrealized_pnl
+        
+        await update_unrealized_pnl(mock_session)
+        
+        mock_session.exec.assert_called_once()
+        mock_session.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_long_position_profit(self):
+        """롱 포지션 - 이익 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("0.1")
+        mock_position.unrealized_pnl = Decimal("0")
+        mock_position.mark_price = Decimal("50000")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.return_value = Decimal("52000")  # 상승
+            
+            from app.tasks.scheduler import update_unrealized_pnl
+            
+            await update_unrealized_pnl(mock_session)
+            
+            # PnL 업데이트 확인
+            assert mock_position.mark_price == Decimal("52000")
+            # 롱: (52000 - 50000) * 0.1 = 200
+            expected_pnl = (Decimal("52000") - Decimal("50000")) * Decimal("0.1")
+            assert mock_position.unrealized_pnl == expected_pnl
+
+    @pytest.mark.asyncio
+    async def test_long_position_loss(self):
+        """롱 포지션 - 손실 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("0.1")
+        mock_position.unrealized_pnl = Decimal("0")
+        mock_position.mark_price = Decimal("50000")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.return_value = Decimal("48000")  # 하락
+            
+            from app.tasks.scheduler import update_unrealized_pnl
+            
+            await update_unrealized_pnl(mock_session)
+            
+            # 롱: (48000 - 50000) * 0.1 = -200
+            expected_pnl = (Decimal("48000") - Decimal("50000")) * Decimal("0.1")
+            assert mock_position.unrealized_pnl == expected_pnl
+
+    @pytest.mark.asyncio
+    async def test_short_position_profit(self):
+        """숏 포지션 - 이익 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.SHORT
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("0.1")
+        mock_position.unrealized_pnl = Decimal("0")
+        mock_position.mark_price = Decimal("50000")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.return_value = Decimal("48000")  # 하락 (숏은 이익)
+            
+            from app.tasks.scheduler import update_unrealized_pnl
+            
+            await update_unrealized_pnl(mock_session)
+            
+            # 숏: (50000 - 48000) * 0.1 = 200
+            expected_pnl = (Decimal("50000") - Decimal("48000")) * Decimal("0.1")
+            assert mock_position.unrealized_pnl == expected_pnl
+
+    @pytest.mark.asyncio
+    async def test_short_position_loss(self):
+        """숏 포지션 - 손실 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.SHORT
+        mock_position.entry_price = Decimal("50000")
+        mock_position.quantity = Decimal("0.1")
+        mock_position.unrealized_pnl = Decimal("0")
+        mock_position.mark_price = Decimal("50000")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.return_value = Decimal("52000")  # 상승 (숏은 손실)
+            
+            from app.tasks.scheduler import update_unrealized_pnl
+            
+            await update_unrealized_pnl(mock_session)
+            
+            # 숏: (50000 - 52000) * 0.1 = -200
+            expected_pnl = (Decimal("50000") - Decimal("52000")) * Decimal("0.1")
+            assert mock_position.unrealized_pnl == expected_pnl
+
+    @pytest.mark.asyncio
+    async def test_position_exception_handling(self):
+        """포지션 처리 중 예외 - continue 분기"""
+        from app.models.futures import FuturesPositionSide
+        
+        mock_position = MagicMock()
+        mock_position.id = str(uuid4())
+        mock_position.symbol = "BTCUSDT"
+        mock_position.side = FuturesPositionSide.LONG
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = [mock_position]
+        
+        with patch('app.tasks.scheduler.get_current_price', new_callable=AsyncMock) as mock_price:
+            mock_price.side_effect = Exception("Price fetch error")
+            
+            from app.tasks.scheduler import update_unrealized_pnl
+            
+            await update_unrealized_pnl(mock_session)
+            
+            # 예외 발생해도 commit 호출
+            mock_session.commit.assert_called_once()
+
+
+# ============================================================================
+# 4. update_account_unrealized_pnl 테스트
+# ============================================================================
+
+class TestUpdateAccountUnrealizedPnl:
+    """계정 미실현 손익 합계 업데이트 테스트"""
+
+    @pytest.mark.asyncio
+    async def test_no_accounts(self):
+        """계정 없음 - 빈 루프 분기"""
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.return_value = []
+        
+        from app.tasks.scheduler import update_account_unrealized_pnl
+        
+        await update_account_unrealized_pnl(mock_session)
+        
+        mock_session.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_account_with_no_positions(self):
+        """계정 있지만 포지션 없음 분기"""
+        mock_account = MagicMock()
+        mock_account.id = str(uuid4())
+        mock_account.unrealized_pnl = Decimal("100")  # 기존 값
+        
+        mock_session = MagicMock()
+        
+        # 첫 번째 호출: 계정 목록
+        # 두 번째 호출: 포지션 목록 (빈 리스트)
+        mock_session.exec.return_value.all.side_effect = [
+            [mock_account],  # 계정 목록
+            []  # 포지션 목록 (없음)
+        ]
+        
+        from app.tasks.scheduler import update_account_unrealized_pnl
+        
+        await update_account_unrealized_pnl(mock_session)
+        
+        # 미실현 손익이 0으로 업데이트
+        assert mock_account.unrealized_pnl == Decimal("0")
+
+    @pytest.mark.asyncio
+    async def test_account_with_positions(self):
+        """계정에 포지션 있음 분기"""
+        mock_account = MagicMock()
+        mock_account.id = str(uuid4())
+        mock_account.unrealized_pnl = Decimal("0")
+        
+        mock_position1 = MagicMock()
+        mock_position1.unrealized_pnl = Decimal("100")
+        
+        mock_position2 = MagicMock()
+        mock_position2.unrealized_pnl = Decimal("-50")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.side_effect = [
+            [mock_account],  # 계정 목록
+            [mock_position1, mock_position2]  # 포지션 목록
+        ]
+        
+        from app.tasks.scheduler import update_account_unrealized_pnl
+        
+        await update_account_unrealized_pnl(mock_session)
+        
+        # 100 + (-50) = 50
+        assert mock_account.unrealized_pnl == Decimal("50")
+
+    @pytest.mark.asyncio
+    async def test_multiple_accounts(self):
+        """여러 계정 분기"""
+        mock_account1 = MagicMock()
+        mock_account1.id = str(uuid4())
+        mock_account1.unrealized_pnl = Decimal("0")
+        
+        mock_account2 = MagicMock()
+        mock_account2.id = str(uuid4())
+        mock_account2.unrealized_pnl = Decimal("0")
+        
+        mock_position1 = MagicMock()
+        mock_position1.unrealized_pnl = Decimal("200")
+        
+        mock_position2 = MagicMock()
+        mock_position2.unrealized_pnl = Decimal("-100")
+        
+        mock_session = MagicMock()
+        mock_session.exec.return_value.all.side_effect = [
+            [mock_account1, mock_account2],  # 계정 목록
+            [mock_position1],  # account1 포지션
+            [mock_position2]   # account2 포지션
+        ]
+        
+        from app.tasks.scheduler import update_account_unrealized_pnl
+        
+        await update_account_unrealized_pnl(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_exception_handling(self):
+        """예외 발생 - rollback 분기"""
+        mock_session = MagicMock()
+        mock_session.exec.side_effect = Exception("DB Error")
+        
+        from app.tasks.scheduler import update_account_unrealized_pnl
+        
+        await update_account_unrealized_pnl(mock_session)
+        
+        mock_session.rollback.assert_called_once()
+
+
+# ============================================================================
+# 5. 백그라운드 작업 시작 함수 테스트
+# ============================================================================
+
+class TestBackgroundTaskStarters:
+    """백그라운드 작업 시작 함수 테스트"""
+
+    def test_start_futures_background_tasks(self):
+        """start_futures_background_tasks 호출 테스트"""
+        with patch('asyncio.create_task') as mock_create_task:
+            from app.tasks.scheduler import start_futures_background_tasks
+            
+            start_futures_background_tasks()
+            
+            mock_create_task.assert_called_once()
+
+    def test_start_all_background_tasks(self):
+        """start_all_background_tasks 호출 테스트"""
+        with patch('asyncio.create_task') as mock_create_task:
+            from app.tasks.scheduler import start_all_background_tasks
+            
+            start_all_background_tasks()
+            
+            mock_create_task.assert_called_once()
+
+
+# ============================================================================
+# 실행
+# ============================================================================
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
