@@ -52,3 +52,33 @@ python-multipart>=0.0.6
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 PyJWT>=2.8.0
+
+# Rate Limiting (선택적 - Redis 지원)
+slowapi>=0.1.9
+
+# 보안 검사
+safety>=3.0.1      # 의존성 취약점 검사
+bandit>=1.7.6      # 코드 보안 검사
+
+# 비밀번호 해싱 (이미 있을 수 있음)
+argon2-cffi>=23.1.0
+
+# 환경 변수 관리
+python-dotenv>=1.0.0
+
+# HTTPS/SSL (프로덕션용)
+# certifi>=2024.2.2
+
+# 보안 헤더 (선택적)
+secure>=0.3.0
+
+# 입력 검증 강화
+email-validator>=2.1.0
+bleach>=6.1.0      # HTML Sanitization
+
+# 로깅 강화
+python-json-logger>=2.0.7
+
+# 세션 관리 (선택적 - Redis)
+# redis>=5.0.1
+# aioredis>=2.0.1
