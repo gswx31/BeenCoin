@@ -1,6 +1,6 @@
 // client/src/contexts/AuthContext.js
 // =============================================================================
-// 인증 Context - 보안 강화 버전
+// 인증 Context - 새로고침 시 로그인 유지 개선 버전
 // =============================================================================
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios, { apiService } from '../api/axios';
@@ -52,10 +52,11 @@ export const AuthProvider = ({ children }) => {
   }, [tokenExpiry]);
 
   // ===========================================
-  // 인증 상태 확인
+  // 인증 상태 확인 (개선)
   // ===========================================
   const checkAuth = useCallback(async () => {
     const token = localStorage.getItem('token');
+    const username = localStorage.getItem('username');
 
     if (!token) {
       setLoading(false);
@@ -63,29 +64,45 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      // 토큰 유효성 검증 (백엔드 /auth/me 호출)
-      const response = await axios.get(endpoints.auth.me);
+      // ✅ axios 기본 헤더에 토큰 설정 (중요!)
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       
-      setUser(response.data);
+      // 토큰 유효성 검증 (백엔드 /auth/me 호출)
+      // 만약 /auth/me 엔드포인트가 없다면 간단히 user 정보만 설정
+      try {
+        const response = await axios.get(endpoints.auth.me);
+        setUser(response.data);
+        console.log('✅ Auth check successful:', response.data);
+        
+        // 토큰 만료 시간 설정 (백엔드에서 받은 경우)
+        if (response.data.token_expiry) {
+          setTokenExpiry(new Date(response.data.token_expiry).getTime());
+        }
+      } catch (meError) {
+        // /auth/me가 없는 경우 username으로 대체
+        console.warn('⚠️ /auth/me not available, using username from localStorage');
+        if (username) {
+          setUser({ username });
+        } else {
+          throw new Error('No user data available');
+        }
+      }
+      
       setIsAuthenticated(true);
 
-      // 토큰 만료 시간 설정 (백엔드에서 받은 경우)
-      if (response.data.token_expiry) {
-        setTokenExpiry(new Date(response.data.token_expiry).getTime());
-      }
-
     } catch (error) {
-      console.error('Auth check failed:', error);
+      console.error('❌ Auth check failed:', error);
       
       // 토큰이 유효하지 않으면 제거
       clearAuthData();
+      delete axios.defaults.headers.common['Authorization'];
     } finally {
       setLoading(false);
     }
   }, []);
 
   // ===========================================
-  // 로그인
+  // 로그인 (개선)
   // ===========================================
   const login = useCallback(async (username, password) => {
     try {
@@ -114,6 +131,9 @@ export const AuthProvider = ({ children }) => {
       // 토큰 저장
       localStorage.setItem('token', access_token);
       localStorage.setItem('username', username);
+
+      // ✅ axios 기본 헤더에 토큰 설정 (중요!)
+      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
 
       // 사용자 정보 설정
       setUser({ username });
@@ -207,11 +227,15 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   // ===========================================
-  // 로그아웃
+  // 로그아웃 (개선)
   // ===========================================
   const logout = useCallback(() => {
     console.log('👋 Logging out');
     clearAuthData();
+    
+    // ✅ axios 헤더에서 토큰 제거
+    delete axios.defaults.headers.common['Authorization'];
+    
     toast.info('로그아웃되었습니다.');
   }, []);
 

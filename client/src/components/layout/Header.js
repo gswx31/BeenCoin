@@ -1,6 +1,6 @@
 // client/src/components/layout/Header.js
 // =============================================================================
-// 헤더 컴포넌트 - 네비게이션 및 사용자 메뉴
+// 헤더 컴포넌트 - 선물 거래 전용 네비게이션
 // =============================================================================
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
@@ -35,7 +35,7 @@ const Header = () => {
             </div>
             <div>
               <span className="text-xl font-bold">BeenCoin</span>
-              <span className="text-xs text-gray-400 block">모의투자</span>
+              <span className="text-xs text-purple-400 block">선물거래 플랫폼</span>
             </div>
           </Link>
 
@@ -50,16 +50,14 @@ const Header = () => {
                 <NavLink to="/futures/BTCUSDT" active={location.pathname.startsWith('/futures/')}>
                   <span className="flex items-center">
                     선물거래
-                    <span className="ml-1 px-1.5 py-0.5 bg-purple-600 rounded text-xs">NEW</span>
+                    <span className="ml-1 px-1.5 py-0.5 bg-purple-600 rounded text-xs animate-pulse">
+                      LIVE
+                    </span>
                   </span>
                 </NavLink>
                 
-                <NavLink to="/portfolio" active={isActive('/portfolio')}>
-                  현물 포트폴리오
-                </NavLink>
-                
                 <NavLink to="/futures/portfolio" active={isActive('/futures/portfolio')}>
-                  선물 포트폴리오
+                  포트폴리오
                 </NavLink>
               </>
             )}
@@ -71,26 +69,26 @@ const Header = () => {
             <div className="flex items-center space-x-2 text-sm">
               {isConnected ? (
                 <span className="flex items-center text-green-400">
-                  <span className="w-2 h-2 bg-green-400 rounded-full mr-1 animate-pulse"></span>
+                  <span className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></span>
                   실시간
                 </span>
               ) : (
                 <span className="flex items-center text-yellow-400">
-                  <span className="w-2 h-2 bg-yellow-400 rounded-full mr-1"></span>
-                  연결 중
+                  <span className="w-2 h-2 bg-yellow-400 rounded-full mr-2"></span>
+                  연결 중...
                 </span>
               )}
             </div>
 
             {/* 사용자 메뉴 */}
             {isAuthenticated ? (
-              <div className="flex items-center space-x-4">
-                <span className="text-gray-400">
-                  <span className="text-white font-semibold">{user?.username}</span>님
+              <div className="flex items-center space-x-3">
+                <span className="text-sm text-gray-400">
+                  {user?.username || 'User'}
                 </span>
                 <button
                   onClick={handleLogout}
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors text-sm"
                 >
                   로그아웃
                 </button>
@@ -99,13 +97,13 @@ const Header = () => {
               <div className="flex items-center space-x-2">
                 <Link
                   to="/login"
-                  className="px-4 py-2 hover:text-accent transition-colors"
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors text-sm"
                 >
                   로그인
                 </Link>
                 <Link
                   to="/register"
-                  className="px-4 py-2 bg-accent hover:bg-teal-600 rounded-lg transition-colors"
+                  className="px-4 py-2 bg-accent hover:bg-accent/80 rounded-lg transition-colors text-sm font-semibold"
                 >
                   회원가입
                 </Link>
@@ -115,8 +113,8 @@ const Header = () => {
 
           {/* 모바일 메뉴 버튼 */}
           <button
+            className="md:hidden p-2 rounded-lg hover:bg-gray-700"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg hover:bg-gray-700 transition-colors"
           >
             <svg
               className="w-6 h-6"
@@ -154,41 +152,32 @@ const Header = () => {
               {isAuthenticated && (
                 <>
                   <MobileNavLink to="/futures/BTCUSDT" onClick={() => setMobileMenuOpen(false)}>
-                    선물거래
-                  </MobileNavLink>
-                  <MobileNavLink to="/portfolio" onClick={() => setMobileMenuOpen(false)}>
-                    현물 포트폴리오
+                    선물거래 🔥
                   </MobileNavLink>
                   <MobileNavLink to="/futures/portfolio" onClick={() => setMobileMenuOpen(false)}>
-                    선물 포트폴리오
+                    포트폴리오
                   </MobileNavLink>
-                </>
-              )}
-              
-              <div className="pt-4 border-t border-gray-700">
-                {isAuthenticated ? (
-                  <>
-                    <p className="px-4 py-2 text-gray-400">
-                      <span className="text-white font-semibold">{user?.username}</span>님
-                    </p>
+                  <div className="pt-2 border-t border-gray-700">
                     <button
                       onClick={handleLogout}
-                      className="w-full text-left px-4 py-2 hover:bg-gray-700 rounded-lg transition-colors text-red-400"
+                      className="w-full text-left px-4 py-2 text-red-400 hover:bg-gray-700 rounded-lg"
                     >
                       로그아웃
                     </button>
-                  </>
-                ) : (
-                  <>
-                    <MobileNavLink to="/login" onClick={() => setMobileMenuOpen(false)}>
-                      로그인
-                    </MobileNavLink>
-                    <MobileNavLink to="/register" onClick={() => setMobileMenuOpen(false)}>
-                      회원가입
-                    </MobileNavLink>
-                  </>
-                )}
-              </div>
+                  </div>
+                </>
+              )}
+              
+              {!isAuthenticated && (
+                <>
+                  <MobileNavLink to="/login" onClick={() => setMobileMenuOpen(false)}>
+                    로그인
+                  </MobileNavLink>
+                  <MobileNavLink to="/register" onClick={() => setMobileMenuOpen(false)}>
+                    회원가입
+                  </MobileNavLink>
+                </>
+              )}
             </nav>
           </div>
         )}
@@ -197,26 +186,26 @@ const Header = () => {
   );
 };
 
-// 네비게이션 링크 컴포넌트
-const NavLink = ({ to, active, exact, children }) => (
+// 데스크톱 네비게이션 링크
+const NavLink = ({ to, active, children, exact }) => (
   <Link
     to={to}
     className={`px-4 py-2 rounded-lg transition-colors ${
       active
-        ? 'bg-gray-700 text-accent'
-        : 'text-gray-300 hover:text-white hover:bg-gray-700'
+        ? 'bg-accent text-gray-900 font-semibold'
+        : 'text-gray-300 hover:bg-gray-700'
     }`}
   >
     {children}
   </Link>
 );
 
-// 모바일 네비게이션 링크 컴포넌트
+// 모바일 네비게이션 링크
 const MobileNavLink = ({ to, onClick, children }) => (
   <Link
     to={to}
     onClick={onClick}
-    className="px-4 py-2 hover:bg-gray-700 rounded-lg transition-colors"
+    className="px-4 py-2 text-gray-300 hover:bg-gray-700 rounded-lg"
   >
     {children}
   </Link>
