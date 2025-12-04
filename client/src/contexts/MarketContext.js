@@ -1,5 +1,7 @@
 // client/src/contexts/MarketContext.js
-// 실시간 가격 WebSocket 영원히 안 끊기는 버전 (컴파일 100% 통과)
+// =============================================================================
+// 마켓 데이터 Context - 실시간 가격 WebSocket
+// =============================================================================
 import React, {
   createContext,
   useContext,
@@ -76,7 +78,7 @@ export const MarketProvider = ({ children }) => {
     }
   }, []);
 
-  // WebSocket 연결 (핵심)
+  // WebSocket 연결
   const connectWebSocket = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.CONNECTING) return;
     if (wsRef.current) wsRef.current.close();
@@ -88,71 +90,68 @@ export const MarketProvider = ({ children }) => {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log('WebSocket 연결 성공');
+      console.log('✅ WebSocket 연결 성공');
       setIsConnected(true);
       reconnectAttempts.current = 0;
       ws.send(JSON.stringify({ type: 'subscribe', channels: ['prices'] }));
     };
 
     ws.onmessage = (event) => {
-      // ping 오면 무조건 pong (이게 제일 중요!)
-      if (event.data === 'ping' || event.data === '"ping"') {
+      // ping 응답
+      if (event.data === 'ping') {
         ws.send('pong');
         return;
       }
 
       try {
-        const data = JSON.parse(event.data);
+        const message = JSON.parse(event.data);
 
-        if (data.type === 'ping') {
+        if (message.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
           return;
         }
 
-        if (data.type === 'price_update' && data.data) {
-          const parsed = {};
-          Object.entries(data.data).forEach(([symbol, price]) => {
-            const p = parseFloat(price);
-            if (!isNaN(p) && p > 0) parsed[symbol] = p;
-          });
-          setRealtimePrices((prev) => ({ ...prev, ...parsed }));
+        if (message.type === 'prices' && message.data) {
+          setRealtimePrices((prev) => ({ ...prev, ...message.data }));
+        }
+
+        if (message.type === 'price_update' && message.symbol && message.price) {
+          setRealtimePrices((prev) => ({
+            ...prev,
+            [message.symbol]: parseFloat(message.price),
+          }));
         }
       } catch (e) {
-        // JSON 파싱 실패는 무시 (ping 등 문자열)
+        // JSON 파싱 실패 무시
       }
     };
 
-    ws.onerror = () => {
-      console.error('WebSocket 오류');
+    ws.onerror = (error) => {
+      console.error('WebSocket 오류:', error);
       setIsConnected(false);
-      scheduleReconnect();
     };
 
     ws.onclose = (event) => {
-      console.log(`WebSocket 종료 (code: ${event.code})`);
+      console.log('WebSocket 닫힘:', event.code, event.reason);
       setIsConnected(false);
       wsRef.current = null;
-
-      // 정상 종료가 아니면 재연결
-      if (event.code !== 1000 && event.code !== 1001) {
-        scheduleReconnect();
-      }
+      scheduleReconnect();
     };
   }, []);
 
-  // 무한 재연결 (지수 백오프)
+  // 재연결 스케줄링
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) return;
 
-    const attempt = ++reconnectAttempts.current;
-    const delay = Math.min(1000 * 2 ** Math.min(attempt, 10), MAX_DELAY);
+    reconnectAttempts.current += 1;
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current - 1), MAX_DELAY);
 
-    console.log(`재연결 ${attempt}회 → ${delay / 1000}초 후 재시도`);
+    console.log(`🔄 ${delay / 1000}초 후 재연결 시도 (#${reconnectAttempts.current})`);
 
-    if (attempt > 10) {
+    if (reconnectAttempts.current === 3) {
       const now = Date.now();
-      if (now - lastToastTime.current > 30000) {
-        toast.warning('실시간 가격 연결이 불안정합니다. 재연결 중...', {
+      if (now - lastToastTime.current > 60000) {
+        toast.warning('실시간 연결이 불안정합니다. 재연결 중...', {
           toastId: 'ws-unstable',
         });
         lastToastTime.current = now;
@@ -165,7 +164,7 @@ export const MarketProvider = ({ children }) => {
     }, delay);
   }, [connectWebSocket]);
 
-  // 수동 재연결 함수
+  // 수동 재연결
   const reconnect = useCallback(() => {
     reconnectAttempts.current = 0;
     if (reconnectTimeoutRef.current) {
@@ -175,7 +174,7 @@ export const MarketProvider = ({ children }) => {
     connectWebSocket();
   }, [connectWebSocket]);
 
-  // 정리
+  // WebSocket 정리
   const disconnectWebSocket = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -188,7 +187,7 @@ export const MarketProvider = ({ children }) => {
     setIsConnected(false);
   }, []);
 
-  // 기타 API 함수들
+  // API 함수들
   const fetchCoinDetail = async (symbol) => {
     const { data } = await axios.get(endpoints.market.coinDetail(symbol));
     return data;

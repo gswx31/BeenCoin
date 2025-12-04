@@ -1,12 +1,8 @@
 // client/src/components/trading/TradingChart.js
 // =============================================================================
-// 개선된 차트 컴포넌트
-// - 초 단위: 1s, 3s, 5s, 15s, 30s
-// - 분 단위: 1m, 3m, 5m, 15m, 30m
-// - 시간 단위: 1h, 2h, 4h, 6h, 12h
-// - 일/주 단위: 1d, 3d, 1w
+// 차트 컴포넌트 - timestamp 파싱 및 툴팁 개선
 // =============================================================================
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Line } from 'react-chartjs-2';
 import axios from '../../api/axios';
 import {
@@ -34,7 +30,8 @@ ChartJS.register(
 
 const TradingChart = ({ symbol }) => {
   const [chartData, setChartData] = useState(null);
-  const [interval, setInterval] = useState('1m');
+  const [rawData, setRawData] = useState([]); // 원본 데이터 저장 (툴팁용)
+  const [timeInterval, setTimeInterval] = useState('1m');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -46,27 +43,109 @@ const TradingChart = ({ symbol }) => {
     일주: ['1d', '3d', '1w'],
   };
 
-  useEffect(() => {
-    fetchChartData();
+  // ⭐ timestamp 파싱 함수 (다양한 형식 지원)
+  const parseTimestamp = useCallback((value) => {
+    if (!value) return new Date();
     
-    // 실시간 업데이트 (초 단위는 더 자주)
-    const updateInterval = interval.includes('s') ? 1000 : interval.includes('m') ? 5000 : 30000;
-    const timer = setInterval(fetchChartData, updateInterval);
+    // 이미 Date 객체인 경우
+    if (value instanceof Date) {
+      return isNaN(value.getTime()) ? new Date() : value;
+    }
     
-    return () => clearInterval(timer);
-  }, [symbol, interval]);
+    // 숫자 (밀리초 또는 초)
+    if (typeof value === 'number') {
+      // 13자리면 밀리초, 10자리면 초
+      const timestamp = value > 9999999999 ? value : value * 1000;
+      const date = new Date(timestamp);
+      return isNaN(date.getTime()) ? new Date() : date;
+    }
+    
+    // 문자열
+    if (typeof value === 'string') {
+      // 숫자 문자열인 경우
+      if (/^\d+$/.test(value)) {
+        const num = parseInt(value, 10);
+        const timestamp = num > 9999999999 ? num : num * 1000;
+        const date = new Date(timestamp);
+        return isNaN(date.getTime()) ? new Date() : date;
+      }
+      
+      // ISO 문자열 또는 다른 형식
+      const date = new Date(value);
+      return isNaN(date.getTime()) ? new Date() : date;
+    }
+    
+    return new Date();
+  }, []);
 
-  const fetchChartData = async () => {
+  // 시간 단위에 따른 데이터 포인트 개수
+  const getDataPointLimit = useCallback((interval) => {
+    if (typeof interval !== 'string') return 50;
+    if (interval.includes('s')) return 60;
+    if (interval.includes('m')) return 100;
+    if (interval.includes('h')) return 48;
+    if (interval === '1d') return 30;
+    if (interval === '3d') return 30;
+    if (interval === '1w') return 24;
+    return 50;
+  }, []);
+
+  // X축 레이블 포맷팅 (짧게)
+  const formatLabel = useCallback((date, interval) => {
+    if (!(date instanceof Date) || isNaN(date.getTime())) {
+      return '--:--';
+    }
+    
+    if (typeof interval !== 'string') {
+      return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    if (interval.includes('s')) {
+      return date.toLocaleTimeString('ko-KR', { 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        second: '2-digit' 
+      });
+    } else if (interval.includes('m')) {
+      return date.toLocaleTimeString('ko-KR', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+    } else if (interval.includes('h')) {
+      return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}시`;
+    } else {
+      return `${date.getMonth() + 1}/${date.getDate()}`;
+    }
+  }, []);
+
+  // ⭐ 툴팁용 상세 시간 포맷팅
+  const formatTooltipTime = useCallback((date) => {
+    if (!(date instanceof Date) || isNaN(date.getTime())) {
+      return '시간 정보 없음';
+    }
+    
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  }, []);
+
+  // 차트 데이터 로드
+  const fetchChartData = useCallback(async () => {
+    if (!symbol) return;
+    
     try {
       setLoading(true);
       setError(null);
 
-      // 데이터 포인트 개수 결정
-      const limit = getDataPointLimit(interval);
+      const limit = getDataPointLimit(timeInterval);
       
-      // API 호출 (백엔드에서 interval 지원 필요)
       const response = await axios.get(
-        `/api/v1/market/historical/${symbol}?interval=${interval}&limit=${limit}`
+        `/api/v1/market/historical/${symbol}?interval=${timeInterval}&limit=${limit}`
       );
       
       const data = response.data;
@@ -75,13 +154,27 @@ const TradingChart = ({ symbol }) => {
         throw new Error('데이터가 없습니다');
       }
 
-      // 차트 데이터 포맷팅
+      // 원본 데이터 저장 (timestamp 파싱 포함)
+      const processedData = data.map((d) => {
+        // timestamp 또는 time 필드 사용
+        const rawTimestamp = d.timestamp || d.time;
+        const parsedDate = parseTimestamp(rawTimestamp);
+        
+        return {
+          ...d,
+          parsedDate,
+          close: typeof d.close === 'number' ? d.close : parseFloat(d.close) || 0,
+        };
+      });
+      
+      setRawData(processedData);
+
       setChartData({
-        labels: data.map((d) => formatTimestamp(d.timestamp, interval)),
+        labels: processedData.map((d) => formatLabel(d.parsedDate, timeInterval)),
         datasets: [
           {
             label: '가격 (USDT)',
-            data: data.map((d) => d.close),
+            data: processedData.map((d) => d.close),
             borderColor: '#4fd1c5',
             backgroundColor: (context) => {
               const ctx = context.chart.ctx;
@@ -101,59 +194,34 @@ const TradingChart = ({ symbol }) => {
           },
         ],
       });
-    } catch (error) {
-      console.error('차트 데이터 로드 실패:', error);
-      setError(error.message);
+    } catch (err) {
+      console.error('차트 데이터 로드 실패:', err);
+      setError(err.message || '차트 로드 실패');
     } finally {
       setLoading(false);
     }
-  };
+  }, [symbol, timeInterval, getDataPointLimit, formatLabel, parseTimestamp]);
 
-  // 시간 단위에 따른 데이터 포인트 개수
-  const getDataPointLimit = (interval) => {
-    if (interval.includes('s')) return 60; // 초: 60개
-    if (interval.includes('m')) return 100; // 분: 100개
-    if (interval.includes('h')) return 48; // 시간: 48개
-    if (interval === '1d') return 30; // 일: 30개
-    if (interval === '3d') return 30; // 3일: 30개
-    if (interval === '1w') return 24; // 주: 24개
-    return 50;
-  };
-
-  // 타임스탬프 포맷팅
-  const formatTimestamp = (timestamp, interval) => {
-    const date = new Date(timestamp);
+  // 데이터 로드 및 자동 갱신
+  useEffect(() => {
+    fetchChartData();
     
-    if (interval.includes('s')) {
-      // 초: 시:분:초
-      return date.toLocaleTimeString('ko-KR', { 
-        hour: '2-digit', 
-        minute: '2-digit', 
-        second: '2-digit' 
-      });
-    } else if (interval.includes('m')) {
-      // 분: 시:분
-      return date.toLocaleTimeString('ko-KR', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      });
-    } else if (interval.includes('h')) {
-      // 시간: 월/일 시:분
-      return date.toLocaleDateString('ko-KR', { 
-        month: 'short', 
-        day: 'numeric', 
-        hour: '2-digit' 
-      });
-    } else {
-      // 일/주: 월/일
-      return date.toLocaleDateString('ko-KR', { 
-        month: 'short', 
-        day: 'numeric' 
-      });
+    let updateMs = 30000;
+    
+    if (typeof timeInterval === 'string') {
+      if (timeInterval.includes('s')) {
+        updateMs = 1000;
+      } else if (timeInterval.includes('m')) {
+        updateMs = 5000;
+      }
     }
-  };
+    
+    const timer = window.setInterval(fetchChartData, updateMs);
+    
+    return () => window.clearInterval(timer);
+  }, [symbol, timeInterval, fetchChartData]);
 
-  // 차트 옵션
+  // ⭐ 차트 옵션 (툴팁 개선)
   const options = {
     responsive: true,
     maintainAspectRatio: false,
@@ -170,18 +238,46 @@ const TradingChart = ({ symbol }) => {
         mode: 'index',
         intersect: false,
         backgroundColor: 'rgba(0, 0, 0, 0.9)',
-        titleColor: '#fff',
+        titleColor: '#9ca3af',
         bodyColor: '#4fd1c5',
         borderColor: '#4fd1c5',
         borderWidth: 1,
         padding: 12,
         displayColors: false,
         callbacks: {
+          // ⭐ 툴팁 타이틀: 상세 시간 표시
+          title: (tooltipItems) => {
+            if (!tooltipItems.length) return '';
+            
+            const index = tooltipItems[0].dataIndex;
+            if (rawData[index] && rawData[index].parsedDate) {
+              return formatTooltipTime(rawData[index].parsedDate);
+            }
+            return tooltipItems[0].label || '';
+          },
+          // 가격 표시
           label: (context) => {
-            return `$${context.parsed.y.toLocaleString('en-US', {
+            const price = context.parsed.y;
+            return `가격: $${price.toLocaleString('en-US', {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
             })}`;
+          },
+          // ⭐ 추가 정보 (OHLC)
+          afterLabel: (context) => {
+            const index = context.dataIndex;
+            if (rawData[index]) {
+              const d = rawData[index];
+              const lines = [];
+              
+              if (d.open) lines.push(`시가: $${parseFloat(d.open).toLocaleString()}`);
+              if (d.high) lines.push(`고가: $${parseFloat(d.high).toLocaleString()}`);
+              if (d.low) lines.push(`저가: $${parseFloat(d.low).toLocaleString()}`);
+              if (d.volume) lines.push(`거래량: ${parseFloat(d.volume).toLocaleString()}`);
+              
+              return lines.length > 0 ? lines : null;
+            }
+            return null;
           },
         },
       },
@@ -232,9 +328,13 @@ const TradingChart = ({ symbol }) => {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
           <h2 className="text-xl font-bold">가격 차트</h2>
+          <span className="text-sm text-gray-400">{symbol}</span>
           {loading && (
-            <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
           )}
+        </div>
+        <div className="text-xs text-gray-500">
+          마우스 올리면 상세 정보
         </div>
       </div>
 
@@ -247,10 +347,10 @@ const TradingChart = ({ symbol }) => {
               {intervals.map((int) => (
                 <button
                   key={int}
-                  onClick={() => setInterval(int)}
+                  onClick={() => setTimeInterval(int)}
                   className={`px-3 py-1.5 rounded text-sm font-medium transition-all ${
-                    interval === int
-                      ? 'bg-accent text-gray-900 shadow-lg shadow-accent/50'
+                    timeInterval === int
+                      ? 'bg-teal-500 text-gray-900 shadow-lg shadow-teal-500/50'
                       : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}
                 >
@@ -271,7 +371,7 @@ const TradingChart = ({ symbol }) => {
               <p className="text-sm text-gray-500">{error}</p>
               <button
                 onClick={fetchChartData}
-                className="mt-4 px-4 py-2 bg-accent text-gray-900 rounded hover:bg-accent/80"
+                className="mt-4 px-4 py-2 bg-teal-500 text-gray-900 rounded hover:bg-teal-400"
               >
                 다시 시도
               </button>
@@ -281,20 +381,9 @@ const TradingChart = ({ symbol }) => {
           <Line data={chartData} options={options} />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center text-gray-400">
-              <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-              <p>차트를 불러오는 중...</p>
-            </div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500"></div>
           </div>
         )}
-      </div>
-
-      {/* 차트 설명 */}
-      <div className="mt-4 pt-4 border-t border-gray-700 text-xs text-gray-500">
-        <div className="flex justify-between">
-          <span>🔄 자동 업데이트 중</span>
-          <span>📊 {chartData ? chartData.labels.length : 0}개 데이터 포인트</span>
-        </div>
       </div>
     </div>
   );

@@ -1,36 +1,25 @@
 // client/src/components/layout/Footer.js
+// =============================================================================
+// 푸터 컴포넌트
+// =============================================================================
 import React from 'react';
 
 const Footer = () => {
   return (
-    <footer className="bg-gray-800 border-t border-gray-700 mt-20">
-      <div className="container mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          <div>
-            <h3 className="text-lg font-bold mb-4">BeenCoin</h3>
-            <p className="text-gray-400 text-sm">
-              실시간 암호화폐 모의투자 플랫폼
-            </p>
+    <footer className="bg-gray-800 border-t border-gray-700 py-6">
+      <div className="container mx-auto px-4">
+        <div className="flex flex-col md:flex-row justify-between items-center">
+          <div className="text-gray-400 text-sm mb-4 md:mb-0">
+            © 2024 BeenCoin. 선물거래 시뮬레이션 플랫폼
           </div>
-          <div>
-            <h3 className="text-lg font-bold mb-4">서비스</h3>
-            <ul className="space-y-2 text-sm text-gray-400">
-              <li>실시간 시세</li>
-              <li>모의투자</li>
-              <li>포트폴리오 관리</li>
-            </ul>
+          <div className="flex items-center space-x-4 text-sm text-gray-400">
+            <span className="flex items-center">
+              <span className="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
+              선물거래 전용
+            </span>
+            <span>|</span>
+            <span>실시간 바이낸스 데이터</span>
           </div>
-          <div>
-            <h3 className="text-lg font-bold mb-4">정보</h3>
-            <p className="text-gray-400 text-sm">
-              이 사이트는 교육 목적의 모의투자 플랫폼입니다.
-              <br />
-              실제 거래가 발생하지 않습니다.
-            </p>
-          </div>
-        </div>
-        <div className="border-t border-gray-700 mt-8 pt-8 text-center text-gray-400 text-sm">
-          © 2025 BeenCoin. All rights reserved.
         </div>
       </div>
     </footer>

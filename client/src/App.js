@@ -1,7 +1,6 @@
 // client/src/App.js
 // =============================================================================
 // 메인 앱 컴포넌트 - 선물 거래 전용
-// 일반 거래 제거, 선물 거래만 지원
 // =============================================================================
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -33,7 +32,7 @@ function App() {
       <MarketProvider>
         <FuturesProvider>
           <Router>
-            <div className="min-h-screen bg-dark text-light flex flex-col">
+            <div className="min-h-screen bg-gray-900 text-white flex flex-col">
               <Header />
               
               <main className="flex-grow container mx-auto px-4 py-8">
@@ -63,10 +62,11 @@ function App() {
                     }
                   />
 
-                  {/* 기본 라우트 - 선물 거래로 리다이렉트 */}
+                  {/* 기존 라우트 리다이렉트 */}
                   <Route path="/trading" element={<Navigate to="/futures/BTCUSDT" replace />} />
-                  <Route path="/trading/:symbol" element={<Navigate to="/futures/:symbol" replace />} />
+                  <Route path="/trading/:symbol" element={<Navigate to="/futures/BTCUSDT" replace />} />
                   <Route path="/portfolio" element={<Navigate to="/futures/portfolio" replace />} />
+                  <Route path="/trade/:symbol" element={<Navigate to="/futures/BTCUSDT" replace />} />
 
                   {/* 404 */}
                   <Route path="*" element={<Navigate to="/" replace />} />
@@ -87,7 +87,6 @@ function App() {
                 draggable
                 pauseOnHover
                 theme="dark"
-                toastClassName="bg-gray-800 text-white"
               />
             </div>
           </Router>

@@ -1,6 +1,6 @@
 // client/src/api/endpoints.js
 // =============================================================================
-// API 엔드포인트 중앙 관리 - 백엔드와 완벽 매칭
+// API 엔드포인트 중앙 관리 - 선물 거래 전용
 // =============================================================================
 
 const API_V1 = '/api/v1';
@@ -13,30 +13,13 @@ export const endpoints = {
     register: `${API_V1}/auth/register`,
     login: `${API_V1}/auth/login`,
     me: `${API_V1}/auth/me`,
+    checkUsername: (username) => `${API_V1}/auth/check-username/${username}`,  // ⭐ NEW
     changePassword: `${API_V1}/auth/change-password`,
     checkPasswordStrength: `${API_V1}/auth/check-password-strength`,
   },
 
   // =========================================
-  // 현물 거래 계정 (Spot Account) - 기존 호환
-  // =========================================
-  account: {
-    summary: `${API_V1}/account/`,
-    transactions: `${API_V1}/account/transactions`,
-    positions: `${API_V1}/account/positions`,
-  },
-
-  // =========================================
-  // 현물 주문 (Spot Orders)
-  // =========================================
-  orders: {
-    create: `${API_V1}/orders/`,
-    list: `${API_V1}/orders/`,
-    cancel: (orderId) => `${API_V1}/orders/${orderId}/cancel`,
-  },
-
-  // =========================================
-  // 선물 거래 (Futures) ⭐ NEW
+  // 선물 거래 (Futures)
   // =========================================
   futures: {
     // 계정
@@ -45,6 +28,7 @@ export const endpoints = {
     // 포지션
     openPosition: `${API_V1}/futures/positions/open`,
     closePosition: (positionId) => `${API_V1}/futures/positions/${positionId}/close`,
+    cancelPosition: (positionId) => `${API_V1}/futures/positions/${positionId}/cancel`,
     positions: `${API_V1}/futures/positions`,
     
     // 포트폴리오

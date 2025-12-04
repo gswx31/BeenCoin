@@ -1,6 +1,6 @@
 // client/src/contexts/FuturesContext.js
 // =============================================================================
-// 선물 거래 Context - 포지션, 계정, 주문 관리
+// 선물 거래 Context - 완전판
 // =============================================================================
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from '../api/axios';
@@ -9,7 +9,7 @@ import { useAuth } from './AuthContext';
 import { useMarket } from './MarketContext';
 import { toast } from 'react-toastify';
 
-const FuturesContext = createContext(null);
+const FuturesContext = createContext();
 
 export const useFutures = () => {
   const context = useContext(FuturesContext);
@@ -19,9 +19,6 @@ export const useFutures = () => {
   return context;
 };
 
-// =============================================================================
-// FuturesProvider 컴포넌트
-// =============================================================================
 export const FuturesProvider = ({ children }) => {
   const { isAuthenticated } = useAuth();
   const { realtimePrices } = useMarket();
@@ -38,36 +35,12 @@ export const FuturesProvider = ({ children }) => {
   const [portfolio, setPortfolio] = useState(null);
   const [portfolioLoading, setPortfolioLoading] = useState(false);
 
-  // 거래 내역
+  // 거래 내역 상태
   const [transactions, setTransactions] = useState([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
 
   // ===========================================
-  // 인증 상태 변경 시 데이터 로드
-  // ===========================================
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchAccount();
-      fetchPositions();
-      fetchPortfolioSummary();
-    } else {
-      // 로그아웃 시 초기화
-      setAccount(null);
-      setPositions([]);
-      setPortfolio(null);
-      setTransactions([]);
-    }
-  }, [isAuthenticated]);
-
-  // 실시간 가격 변경 시 포지션 PnL 업데이트
-  useEffect(() => {
-    if (positions.length > 0 && Object.keys(realtimePrices).length > 0) {
-      updatePositionsPnL();
-    }
-  }, [realtimePrices, positions.length]);
-
-  // ===========================================
-  // 계정 정보 조회
+  // 계정 조회
   // ===========================================
   const fetchAccount = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -76,33 +49,26 @@ export const FuturesProvider = ({ children }) => {
     try {
       const response = await axios.get(endpoints.futures.account);
       setAccount(response.data);
-      console.log('📊 Futures account loaded:', response.data);
     } catch (error) {
       console.error('❌ Failed to fetch futures account:', error);
-      // 404면 계정이 아직 생성되지 않음 (정상)
-      if (error.response?.status !== 404) {
-        toast.error('계정 정보를 불러올 수 없습니다.');
-      }
     } finally {
       setAccountLoading(false);
     }
   }, [isAuthenticated]);
 
   // ===========================================
-  // 포지션 목록 조회
+  // 포지션 조회
   // ===========================================
-  const fetchPositions = useCallback(async (status = 'OPEN') => {
+  const fetchPositions = useCallback(async () => {
     if (!isAuthenticated) return;
 
     setPositionsLoading(true);
     try {
-      const response = await axios.get(endpoints.futures.positions, {
-        params: { status },
-      });
-      setPositions(response.data);
-      console.log(`📊 Futures positions (${status}):`, response.data.length);
+      const response = await axios.get(endpoints.futures.positions);
+      setPositions(response.data || []);
     } catch (error) {
       console.error('❌ Failed to fetch positions:', error);
+      setPositions([]);
     } finally {
       setPositionsLoading(false);
     }
@@ -118,7 +84,6 @@ export const FuturesProvider = ({ children }) => {
     try {
       const response = await axios.get(endpoints.futures.portfolioSummary);
       setPortfolio(response.data);
-      console.log('📊 Portfolio summary loaded:', response.data);
     } catch (error) {
       console.error('❌ Failed to fetch portfolio summary:', error);
     } finally {
@@ -137,16 +102,55 @@ export const FuturesProvider = ({ children }) => {
       const response = await axios.get(endpoints.futures.portfolioTransactions, {
         params: { limit, offset },
       });
-      setTransactions(response.data);
-      console.log('📊 Transactions loaded:', response.data.length);
-      return response.data;
+      setTransactions(response.data || []);
     } catch (error) {
       console.error('❌ Failed to fetch transactions:', error);
-      return [];
+      setTransactions([]);
     } finally {
       setTransactionsLoading(false);
     }
   }, [isAuthenticated]);
+
+  // ===========================================
+  // 초기 데이터 로드
+  // ===========================================
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchAccount();
+      fetchPositions();
+      fetchPortfolioSummary();
+    }
+  }, [isAuthenticated, fetchAccount, fetchPositions, fetchPortfolioSummary]);
+
+  // ===========================================
+  // 실시간 손익 업데이트
+  // ===========================================
+  useEffect(() => {
+    if (!positions.length || !realtimePrices) return;
+
+    setPositions((prevPositions) =>
+      prevPositions.map((pos) => {
+        if (pos.status !== 'OPEN') return pos;
+
+        const currentPrice = realtimePrices[pos.symbol] || pos.mark_price;
+        if (!currentPrice) return pos;
+
+        const unrealizedPnl =
+          pos.side === 'LONG'
+            ? (currentPrice - pos.entry_price) * pos.quantity
+            : (pos.entry_price - currentPrice) * pos.quantity;
+
+        const roe = pos.margin ? (unrealizedPnl / pos.margin) * 100 : 0;
+
+        return {
+          ...pos,
+          mark_price: currentPrice,
+          unrealized_pnl: unrealizedPnl,
+          roe_percent: roe,
+        };
+      })
+    );
+  }, [realtimePrices]);
 
   // ===========================================
   // 포지션 개설
@@ -166,17 +170,19 @@ export const FuturesProvider = ({ children }) => {
 
       console.log('✅ Position opened:', response.data);
 
-      // 성공 알림
       const position = response.data;
+      const priceDisplay = position.entry_price 
+        ? `$${parseFloat(position.entry_price).toLocaleString()}`
+        : 'PENDING';
+
       toast.success(
         `✅ ${position.side} ${position.symbol} 포지션 개설!\n` +
         `수량: ${position.quantity}\n` +
-        `진입가: $${position.entry_price.toLocaleString()}\n` +
+        `진입가: ${priceDisplay}\n` +
         `레버리지: ${position.leverage}x`,
         { autoClose: 5000 }
       );
 
-      // 데이터 새로고침
       await Promise.all([fetchAccount(), fetchPositions()]);
 
       return { success: true, data: response.data };
@@ -185,7 +191,6 @@ export const FuturesProvider = ({ children }) => {
       console.error('❌ Failed to open position:', error);
 
       let errorMessage = '포지션 개설에 실패했습니다.';
-
       if (error.response?.data?.detail) {
         errorMessage = error.response.data.detail;
       }
@@ -206,19 +211,17 @@ export const FuturesProvider = ({ children }) => {
 
       console.log('✅ Position closed:', response.data);
 
-      // 성공 알림
       const result = response.data;
       const pnlColor = result.pnl >= 0 ? '🟢' : '🔴';
       const pnlSign = result.pnl >= 0 ? '+' : '';
 
       toast.success(
         `${pnlColor} ${result.symbol} 포지션 청산!\n` +
-        `손익: ${pnlSign}$${result.pnl.toFixed(2)}\n` +
-        `수익률: ${pnlSign}${result.roe_percent.toFixed(2)}%`,
+        `손익: ${pnlSign}$${parseFloat(result.pnl).toFixed(2)}\n` +
+        `수익률: ${pnlSign}${parseFloat(result.roe_percent).toFixed(2)}%`,
         { autoClose: 5000 }
       );
 
-      // 데이터 새로고침
       await Promise.all([fetchAccount(), fetchPositions()]);
 
       return { success: true, data: response.data };
@@ -227,7 +230,6 @@ export const FuturesProvider = ({ children }) => {
       console.error('❌ Failed to close position:', error);
 
       let errorMessage = '포지션 청산에 실패했습니다.';
-
       if (error.response?.data?.detail) {
         errorMessage = error.response.data.detail;
       }
@@ -238,34 +240,41 @@ export const FuturesProvider = ({ children }) => {
   }, [fetchAccount, fetchPositions]);
 
   // ===========================================
-  // 포지션 PnL 실시간 업데이트
+  // 대기 주문 취소
   // ===========================================
-  const updatePositionsPnL = useCallback(() => {
-    setPositions((prevPositions) =>
-      prevPositions.map((pos) => {
-        const currentPrice = realtimePrices[pos.symbol];
-        if (!currentPrice) return pos;
+  const cancelPendingOrder = useCallback(async (positionId) => {
+    try {
+      console.log('📤 Cancelling pending order:', positionId);
 
-        // PnL 계산
-        let unrealizedPnl;
-        if (pos.side === 'LONG') {
-          unrealizedPnl = (currentPrice - pos.entry_price) * pos.quantity;
-        } else {
-          unrealizedPnl = (pos.entry_price - currentPrice) * pos.quantity;
-        }
+      // 먼저 cancel 엔드포인트 시도, 없으면 close 사용
+      let response;
+      try {
+        response = await axios.delete(endpoints.futures.cancelPosition(positionId));
+      } catch (e) {
+        // cancel 엔드포인트가 없으면 close 사용
+        response = await axios.post(endpoints.futures.closePosition(positionId));
+      }
 
-        // ROE 계산
-        const roe = pos.margin > 0 ? (unrealizedPnl / pos.margin) * 100 : 0;
+      console.log('✅ Pending order cancelled:', response.data);
 
-        return {
-          ...pos,
-          mark_price: currentPrice,
-          unrealized_pnl: unrealizedPnl,
-          roe_percent: roe,
-        };
-      })
-    );
-  }, [realtimePrices]);
+      toast.success('대기 주문이 취소되었습니다.', { autoClose: 3000 });
+
+      await Promise.all([fetchAccount(), fetchPositions()]);
+
+      return { success: true, data: response.data };
+
+    } catch (error) {
+      console.error('❌ Failed to cancel pending order:', error);
+
+      let errorMessage = '주문 취소에 실패했습니다.';
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+
+      toast.error(errorMessage, { autoClose: 5000 });
+      return { success: false, error: errorMessage };
+    }
+  }, [fetchAccount, fetchPositions]);
 
   // ===========================================
   // 체결 내역 조회
@@ -331,6 +340,7 @@ export const FuturesProvider = ({ children }) => {
     // 액션
     openPosition,
     closePosition,
+    cancelPendingOrder,
     fetchPositionFills,
     fetchStats,
     refreshAll,
