@@ -672,6 +672,64 @@ async def liquidate_position(session: Session, position: FuturesPosition):
 # 청산 체크 (스케줄러용)
 # =====================================================
 
+def get_futures_positions(
+    session: Session,
+    user_id: str,
+    status: FuturesPositionStatus = None,
+    symbol: str = None,
+) -> list[FuturesPosition]:
+    """
+    선물 포지션 목록 조회
+    
+    Args:
+        session: DB 세션
+        user_id: 사용자 ID
+        status: 포지션 상태 (OPEN, CLOSED, PENDING, LIQUIDATED)
+        symbol: 거래 심볼 (선택)
+    
+    Returns:
+        포지션 목록
+    """
+    try:
+        # 사용자 계정 조회
+        account = session.exec(
+            select(FuturesAccount).where(FuturesAccount.user_id == user_id)
+        ).first()
+        
+        if not account:
+            return []
+        
+        # 포지션 조회 쿼리 생성
+        query = select(FuturesPosition).where(
+            FuturesPosition.account_id == account.id
+        )
+        
+        # 상태 필터
+        if status:
+            query = query.where(FuturesPosition.status == status)
+        
+        # 심볼 필터
+        if symbol:
+            query = query.where(FuturesPosition.symbol == symbol)
+        
+        # 최신순 정렬
+        query = query.order_by(FuturesPosition.opened_at.desc())
+        
+        positions = session.exec(query).all()
+        
+        logger.debug(
+            f"포지션 조회: User={user_id}, Status={status}, "
+            f"Symbol={symbol}, Count={len(positions)}"
+        )
+        
+        return positions
+        
+    except Exception as e:
+        logger.error(f"❌ 포지션 조회 실패: {e}")
+        return []
+
+
+
 async def check_liquidations(session: Session):
     """청산 체크"""
     try:
