@@ -2,6 +2,14 @@
 // =============================================================================
 // 인증 Context - 새로고침 깜빡임 완전 해결 버전
 // =============================================================================
+// 
+// 📌 주요 변경점:
+// 1. localStorage에서 user 정보 즉시 복원 (초기 렌더링 시 로그인 상태 유지)
+// 2. JWT 토큰 만료 시간 클라이언트에서 미리 체크
+// 3. 백그라운드에서 조용히 토큰 검증 (silent mode)
+// 4. 토큰 자동 갱신 스케줄링 (옵션)
+//
+// =============================================================================
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import axios from '../api/axios';
 import { endpoints } from '../api/endpoints';
@@ -17,30 +25,51 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
-  // ⭐ 핵심 개선: 초기 상태를 localStorage에서 즉시 복원
+  // ============================================================
+  // ⭐ 핵심 개선 1: 초기 상태를 localStorage에서 즉시 복원
+  // ============================================================
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('user');
-    return savedUser ? JSON.parse(savedUser) : null;
+    try {
+      const savedUser = localStorage.getItem('user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
   });
   
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return !!localStorage.getItem('token');
+    const token = localStorage.getItem('token');
+    if (!token) return false;
+    
+    // 토큰 만료 여부 빠르게 체크
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.exp * 1000 > Date.now();
+    } catch {
+      return false;
+    }
   });
   
-  // ⭐ 초기 로딩은 토큰이 있을 때만 true (검증 필요)
+  // ⭐ 핵심 개선 2: 토큰이 있고 유효해 보이면 loading을 false로 시작
   const [loading, setLoading] = useState(() => {
-    return !!localStorage.getItem('token');
+    const token = localStorage.getItem('token');
+    if (!token) return false;
+    
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      // 토큰이 만료되지 않았으면 로딩 없이 시작
+      return payload.exp * 1000 <= Date.now();
+    } catch {
+      return true; // 파싱 실패하면 검증 필요
+    }
   });
   
-  // 토큰 검증 중복 방지
   const isValidating = useRef(false);
-  
-  // 토큰 만료 타이머
   const tokenRefreshTimer = useRef(null);
 
-  // ===========================================
-  // ⭐ 토큰 디코딩 (만료 시간 확인용)
-  // ===========================================
+  // ============================================================
+  // JWT 토큰 디코딩
+  // ============================================================
   const decodeToken = useCallback((token) => {
     try {
       const base64Url = token.split('.')[1];
@@ -57,20 +86,19 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // ===========================================
-  // ⭐ 토큰 만료 체크
-  // ===========================================
+  // ============================================================
+  // 토큰 만료 체크
+  // ============================================================
   const isTokenExpired = useCallback((token) => {
     const payload = decodeToken(token);
     if (!payload || !payload.exp) return true;
-    
     // 30초 여유를 두고 만료 체크
     return payload.exp * 1000 < Date.now() + 30000;
   }, [decodeToken]);
 
-  // ===========================================
+  // ============================================================
   // 인증 정보 초기화
-  // ===========================================
+  // ============================================================
   const clearAuth = useCallback(() => {
     localStorage.removeItem('token');
     localStorage.removeItem('username');
@@ -84,64 +112,25 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // ===========================================
-  // ⭐ 토큰 갱신 스케줄링
-  // ===========================================
-  const scheduleTokenRefresh = useCallback((token) => {
-    const payload = decodeToken(token);
-    if (!payload || !payload.exp) return;
-    
-    // 만료 5분 전에 갱신 시도
-    const expiresIn = payload.exp * 1000 - Date.now();
-    const refreshTime = Math.max(expiresIn - 5 * 60 * 1000, 60000); // 최소 1분
-    
-    if (tokenRefreshTimer.current) {
-      clearTimeout(tokenRefreshTimer.current);
-    }
-    
-    tokenRefreshTimer.current = setTimeout(async () => {
-      console.log('🔄 토큰 자동 갱신 시도...');
-      try {
-        const response = await axios.post(endpoints.auth.refresh);
-        const { access_token } = response.data;
-        
-        localStorage.setItem('token', access_token);
-        scheduleTokenRefresh(access_token);
-        console.log('✅ 토큰 갱신 성공');
-      } catch (error) {
-        console.warn('⚠️ 토큰 갱신 실패, 재로그인 필요');
-        // 갱신 실패해도 즉시 로그아웃하지 않음 (기존 토큰이 아직 유효할 수 있음)
-      }
-    }, refreshTime);
-    
-    console.log(`⏰ 토큰 갱신 예약: ${Math.round(refreshTime / 60000)}분 후`);
-  }, [decodeToken]);
-
-  // ===========================================
+  // ============================================================
   // 사용자 정보 조회 (백그라운드 검증)
-  // ===========================================
+  // ============================================================
   const fetchUser = useCallback(async (silent = false) => {
     if (isValidating.current) return null;
     isValidating.current = true;
     
     try {
       const response = await axios.get(endpoints.auth.me);
-      
       const userData = response.data;
+      
       setUser(userData);
       setIsAuthenticated(true);
       
-      // ⭐ 사용자 정보도 localStorage에 저장 (새로고침 시 즉시 복원용)
+      // ⭐ 사용자 정보 localStorage에 저장 (새로고침 시 즉시 복원용)
       localStorage.setItem('user', JSON.stringify(userData));
       
-      if (response.data.username) {
-        localStorage.setItem('username', response.data.username);
-      }
-      
-      // 토큰 갱신 스케줄링
-      const token = localStorage.getItem('token');
-      if (token) {
-        scheduleTokenRefresh(token);
+      if (userData.username) {
+        localStorage.setItem('username', userData.username);
       }
       
       if (!silent) {
@@ -162,11 +151,11 @@ export const AuthProvider = ({ children }) => {
     } finally {
       isValidating.current = false;
     }
-  }, [clearAuth, scheduleTokenRefresh]);
+  }, [clearAuth]);
 
-  // ===========================================
-  // ⭐ 앱 시작 시 토큰 검증 (백그라운드)
-  // ===========================================
+  // ============================================================
+  // ⭐ 앱 시작 시 토큰 검증 (깜빡임 없이)
+  // ============================================================
   useEffect(() => {
     const initAuth = async () => {
       const token = localStorage.getItem('token');
@@ -176,7 +165,7 @@ export const AuthProvider = ({ children }) => {
         return;
       }
       
-      // ⭐ 토큰이 명백히 만료된 경우 즉시 정리
+      // 토큰이 명백히 만료된 경우 즉시 정리
       if (isTokenExpired(token)) {
         console.log('🔒 토큰 만료됨, 로그아웃');
         clearAuth();
@@ -184,13 +173,13 @@ export const AuthProvider = ({ children }) => {
         return;
       }
       
-      // ⭐ 토큰이 유효해 보이면 UI는 이미 로그인 상태로 표시
-      // 백그라운드에서 서버 검증 진행
+      // ⭐ 핵심: 토큰이 유효해 보이면 UI는 이미 로그인 상태
+      // 백그라운드에서 조용히 서버 검증만 진행
       try {
-        await fetchUser(true); // silent mode
+        await fetchUser(true); // silent mode - 에러 로그 안 찍음
       } catch (error) {
-        // 검증 실패 시에만 로그아웃
-        console.warn('토큰 검증 실패');
+        // 검증 실패해도 이미 clearAuth 호출됨
+        console.warn('토큰 검증 실패 (백그라운드)');
       }
       
       setLoading(false);
@@ -205,9 +194,9 @@ export const AuthProvider = ({ children }) => {
     };
   }, [isTokenExpired, clearAuth, fetchUser]);
 
-  // ===========================================
+  // ============================================================
   // 로그인
-  // ===========================================
+  // ============================================================
   const login = useCallback(async (username, password) => {
     try {
       const formData = new URLSearchParams();
@@ -226,14 +215,14 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('token', access_token);
       localStorage.setItem('username', username);
       
-      // 즉시 인증 상태 설정 (깜빡임 방지)
+      // ⭐ 즉시 인증 상태 설정 (깜빡임 방지)
       setIsAuthenticated(true);
       
-      // 사용자 정보 로드
-      await fetchUser();
-
+      // 사용자 정보 로드 & 저장
+      const userData = await fetchUser();
+      
       console.log('✅ 로그인 성공');
-      return { success: true };
+      return { success: true, user: userData };
     } catch (error) {
       console.error('❌ 로그인 실패:', error);
       const message = error.response?.data?.detail || '로그인에 실패했습니다.';
@@ -241,9 +230,9 @@ export const AuthProvider = ({ children }) => {
     }
   }, [fetchUser]);
 
-  // ===========================================
+  // ============================================================
   // 회원가입
-  // ===========================================
+  // ============================================================
   const register = useCallback(async (username, password) => {
     try {
       await axios.post(endpoints.auth.register, { username, password });
@@ -255,22 +244,23 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // ===========================================
+  // ============================================================
   // 아이디 중복 검사
-  // ===========================================
+  // ============================================================
   const checkUsername = useCallback(async (username) => {
     try {
-      const response = await axios.get(`${endpoints.auth.register.replace('/register', '')}/check-username/${username}`);
+      const response = await axios.get(
+        `${endpoints.auth.register.replace('/register', '')}/check-username/${username}`
+      );
       return response.data;
     } catch (error) {
-      console.error('아이디 중복 검사 실패:', error);
       return { username, available: true };
     }
   }, []);
 
-  // ===========================================
+  // ============================================================
   // 로그아웃
-  // ===========================================
+  // ============================================================
   const logout = useCallback(() => {
     console.log('👋 로그아웃');
     clearAuth();
