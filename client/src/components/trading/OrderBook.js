@@ -1,14 +1,13 @@
 // client/src/components/trading/OrderBook.js
 // =============================================================================
-// 호가창 컴포넌트 - 개선 버전 (안정성 강화)
+// 호가창 컴포넌트 - 안정성 개선 버전
 // =============================================================================
 //
-// 📌 주요 개선 사항:
+// 📌 개선 사항:
 // 1. WebSocket과 REST 폴링 경쟁 조건 해결
 // 2. 데이터 정규화 강화 (배열/객체 형식 통합)
 // 3. WebSocket 재연결 로직 개선
 // 4. 메모리 누수 방지
-// 5. 에러 처리 강화
 //
 // =============================================================================
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -27,17 +26,19 @@ const OrderBook = ({
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [highlightedPrice, setHighlightedPrice] = useState(null);
+  // 📌 추가: WebSocket 연결 상태 추적
   const [isWsConnected, setIsWsConnected] = useState(false);
   
   const wsRef = useRef(null);
   const isMountedRef = useRef(true);
+  // 📌 추가: 재연결 관리
+  const reconnectAttemptsRef = useRef(0);
   const reconnectTimeoutRef = useRef(null);
   const pollingIntervalRef = useRef(null);
-  const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
 
   // =========================================================================
-  // 📌 개선 1: 데이터 정규화 함수 (배열/객체 형식 통합)
+  // 📌 개선: 데이터 정규화 함수 추가
   // =========================================================================
   const normalizeOrderBookData = useCallback((data) => {
     if (!data) return { asks: [], bids: [] };
@@ -71,7 +72,7 @@ const OrderBook = ({
   }, []);
 
   // =========================================================================
-  // 📌 개선 2: REST API 호가 데이터 페칭
+  // 📌 개선: REST API 호가 데이터 페칭 (경쟁 조건 방지)
   // =========================================================================
   const fetchOrderBook = useCallback(async () => {
     // WebSocket이 연결되어 있으면 REST 폴링 스킵
@@ -126,7 +127,7 @@ const OrderBook = ({
   }, [currentPrice, maxRows]);
 
   // =========================================================================
-  // 📌 개선 3: WebSocket 연결 관리 (재연결 로직 강화)
+  // 📌 개선: WebSocket 연결 관리 (재연결 로직 강화)
   // =========================================================================
   const connectWebSocket = useCallback(() => {
     // 최대 재연결 시도 횟수 초과시 중단
@@ -183,7 +184,7 @@ const OrderBook = ({
       wsRef.current.onclose = () => {
         setIsWsConnected(false);
         
-        // 재연결 시도
+        // 재연결 시도 (지수 백오프)
         if (isMountedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current += 1;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
@@ -204,7 +205,7 @@ const OrderBook = ({
   }, [symbol, normalizeOrderBookData]);
 
   // =========================================================================
-  // 📌 개선 4: 초기화 및 정리 (메모리 누수 방지)
+  // 📌 개선: 초기화 및 정리 (메모리 누수 방지)
   // =========================================================================
   useEffect(() => {
     isMountedRef.current = true;
@@ -328,9 +329,10 @@ const OrderBook = ({
       <div className="flex items-center justify-between p-4 border-b border-gray-700">
         <div className="flex items-center space-x-2">
           <h3 className="text-lg font-bold">호가창</h3>
-          {/* 연결 상태 표시 */}
-          <div className={`w-2 h-2 rounded-full ${isWsConnected ? 'bg-green-500' : 'bg-yellow-500'}`} 
-               title={isWsConnected ? 'WebSocket 연결됨' : 'REST API 사용 중'}
+          {/* 📌 추가: 연결 상태 표시 */}
+          <div 
+            className={`w-2 h-2 rounded-full ${isWsConnected ? 'bg-green-500' : 'bg-yellow-500'}`} 
+            title={isWsConnected ? 'WebSocket 연결됨' : 'REST API 사용 중'}
           />
         </div>
         {lastUpdate && (

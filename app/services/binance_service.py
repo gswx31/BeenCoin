@@ -219,6 +219,7 @@ async def get_current_price(symbol: str) -> Decimal:
     # ✅ CI 환경이면 Mock 반환
     if is_ci_environment():
         price = MockBinanceData.get_price(symbol)
+        # 📌 수정: None 체크 추가
         if price is None:
             logger.error(f"🔧 [CI Mock] 유효하지 않은 심볼: {symbol}")
             raise HTTPException(status_code=400, detail=f"Invalid symbol: {symbol}")
@@ -327,7 +328,10 @@ async def get_multiple_prices(symbols: list[str]) -> dict[str, Decimal]:
     if is_ci_environment():
         result = {}
         for symbol in symbols:
-            result[symbol] = Decimal(MockBinanceData.get_price(symbol))
+            # 📌 수정: None 필터링 추가
+            price_str = MockBinanceData.get_price(symbol)
+            if price_str is not None:
+                result[symbol] = Decimal(price_str)
         logger.info(f"🔧 [CI Mock] 다중 가격 조회: {len(result)}개 심볼")
         return result
 
@@ -392,14 +396,12 @@ async def execute_market_order_with_real_trades(
             f"(레버리지 {leverage}x → 실제 {actual_quantity})"
         )
 
-        # 1. 최근 체결 내역 조회 (500건) - Mock도 자동 적용됨
+        # 1. 최근 체결 내역 조회 (500건)
         recent_trades = await get_recent_trades(symbol, limit=500)
 
-        if not recent_trades or len(recent_trades) == 0:
-            # 체결 내역이 없으면 현재가로 즉시 전체 체결
-            logger.warning(f"⚠️ 체결 내역 없음, 현재가로 체결: {symbol}")
+        if not recent_trades:
+            logger.warning(f"⚠️ 체결 내역 없음, 현재가로 체결")
             current_price = await get_current_price(symbol)
-
             return {
                 "filled_quantity": quantity,
                 "average_price": current_price,
@@ -415,26 +417,28 @@ async def execute_market_order_with_real_trades(
                 "actual_position_size": actual_quantity,
             }
 
-        # 2. 실제 거래량만큼 순차적으로 체결
+        # 2. 실제 체결 내역으로 순차 체결
         fills = []
-        remaining = actual_quantity
         total_cost = Decimal("0")
+        remaining = actual_quantity
 
         for trade in recent_trades:
             if remaining <= Decimal("0"):
                 break
 
-            # 거래 정보 추출
             trade_price = Decimal(str(trade["price"]))
             trade_qty = Decimal(str(trade["qty"]))
 
-            if trade_price <= 0 or trade_qty <= 0:
-                continue
-
-            # 남은 수량보다 많으면 일부만 체결
+            # 체결 가능한 수량 (거래량과 남은 수량 중 작은 값)
             fill_qty = min(trade_qty, remaining)
 
-            fills.append({"price": trade_price, "quantity": fill_qty, "timestamp": trade["time"]})
+            fills.append(
+                {
+                    "price": trade_price,
+                    "quantity": fill_qty,
+                    "timestamp": trade["time"],
+                }
+            )
 
             total_cost += trade_price * fill_qty
             remaining -= fill_qty
@@ -811,13 +815,13 @@ async def get_server_time() -> int:
                 return data["serverTime"]
             elif response.status_code == 451:
                 logger.error("❌ 지역 제한: Binance API 접근 불가 (451)")
-                return 0
+                return int(datetime.utcnow().timestamp() * 1000)
             else:
-                return 0
+                return int(datetime.utcnow().timestamp() * 1000)
 
     except Exception as e:
         logger.error(f"❌ 서버 시간 조회 오류: {e}")
-        return 0
+        return int(datetime.utcnow().timestamp() * 1000)
 
 
 async def get_order_book(symbol: str, limit: int = 20) -> dict:
