@@ -1,12 +1,17 @@
 // client/src/components/trading/FuturesOrderForm.js
 // =============================================================================
-// 선물 주문 폼 - 100% 주문 시 수수료 선차감
+// 선물 주문 폼 - 단타 설정 저장 + 손절/익절 직접 입력
 // =============================================================================
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFutures } from '../../contexts/FuturesContext';
 import { useMarket } from '../../contexts/MarketContext';
 import { formatPrice } from '../../utils/formatPrice';
 import { toast } from 'react-toastify';
+import { 
+  loadScalperSettings, 
+  saveScalperSettings,
+  defaultScalperSettings 
+} from '../../utils/scalperSettings';
 
 const FEE_RATE = 0.0004; // 0.04%
 
@@ -19,6 +24,17 @@ const FuturesOrderForm = ({ symbol, currentPrice }) => {
   const [quantity, setQuantity] = useState('');
   const [price, setPrice] = useState('');
   const [leverage, setLeverage] = useState(10);
+  
+  // 🆕 손절/익절 설정
+  const [stopLossEnabled, setStopLossEnabled] = useState(false);
+  const [takeProfitEnabled, setTakeProfitEnabled] = useState(false);
+  const [stopLossPrice, setStopLossPrice] = useState('');
+  const [takeProfitPrice, setTakeProfitPrice] = useState('');
+  
+  // 🆕 단타 모드 - 저장된 설정 불러오기
+  const [scalperSettings, setScalperSettings] = useState(() => loadScalperSettings());
+  const [showSettings, setShowSettings] = useState(false);
+  
   const [loading, setLoading] = useState(false);
   const [calculations, setCalculations] = useState({
     positionValue: 0,
@@ -31,7 +47,15 @@ const FuturesOrderForm = ({ symbol, currentPrice }) => {
   const realPrice = realtimePrices[symbol] || currentPrice || 0;
 
   // ===========================================
-  // ⭐ 수정: 최대 주문 가능 수량 계산 (수수료 포함)
+  // 🆕 컴포넌트 마운트 시 저장된 단타 설정 적용
+  // ===========================================
+  useEffect(() => {
+    const saved = loadScalperSettings();
+    setScalperSettings(saved);
+  }, []);
+
+  // ===========================================
+  // 최대 주문 가능 수량 계산
   // ===========================================
   const calculateMaxQuantity = useCallback(() => {
     if (!account?.available_balance || realPrice <= 0) return 0;
@@ -41,9 +65,6 @@ const FuturesOrderForm = ({ symbol, currentPrice }) => {
     
     if (orderPrice <= 0) return 0;
     
-    // ⭐ 핵심: 수수료를 고려한 최대 수량 계산
-    // 총 필요 = 수량 × 가격 × (1 + 레버리지 × 수수료율)
-    // 최대 수량 = 잔액 / (가격 × (1 + 레버리지 × 수수료율))
     const feeMultiplier = 1 + (leverage * FEE_RATE);
     const maxQuantity = availableBalance / (orderPrice * feeMultiplier);
     
@@ -56,8 +77,7 @@ const FuturesOrderForm = ({ symbol, currentPrice }) => {
   const calculateOrder = useCallback(() => {
     const qty = parseFloat(quantity) || 0;
     const orderPrice = orderType === 'MARKET' ? realPrice : (parseFloat(price) || realPrice);
-    const lev = leverage;
-
+    
     if (qty <= 0 || orderPrice <= 0) {
       setCalculations({
         positionValue: 0,
@@ -69,86 +89,99 @@ const FuturesOrderForm = ({ symbol, currentPrice }) => {
       return;
     }
 
-    // 실제 포지션 크기 (레버리지 적용)
-    const actualQuantity = qty * lev;
-    
-    // 포지션 가치
-    const positionValue = actualQuantity * orderPrice;
-    
-    // 필요 증거금
-    const requiredMargin = positionValue / lev;
-    
-    // 수수료 (0.04%)
+    const positionValue = qty * orderPrice * leverage;
+    const requiredMargin = qty * orderPrice;
     const estimatedFee = positionValue * FEE_RATE;
-    
-    // 총 필요 금액
     const totalCost = requiredMargin + estimatedFee;
-    
+
     // 청산가 계산
-    const liquidationMargin = requiredMargin * 0.9;
+    const maintenanceMarginRate = 0.004;
     let liquidationPrice;
+    
     if (side === 'LONG') {
-      liquidationPrice = orderPrice - (liquidationMargin / actualQuantity);
+      liquidationPrice = orderPrice * (1 - (1 / leverage) + maintenanceMarginRate);
     } else {
-      liquidationPrice = orderPrice + (liquidationMargin / actualQuantity);
+      liquidationPrice = orderPrice * (1 + (1 / leverage) - maintenanceMarginRate);
     }
 
     setCalculations({
       positionValue,
       requiredMargin,
       estimatedFee,
-      liquidationPrice: Math.max(0, liquidationPrice),
+      liquidationPrice,
       totalCost,
     });
-  }, [quantity, price, orderType, leverage, side, realPrice]);
+  }, [quantity, orderType, price, realPrice, leverage, side]);
 
   useEffect(() => {
     calculateOrder();
   }, [calculateOrder]);
 
-  // 지정가 주문 시 현재가로 초기화
+  // ===========================================
+  // 🆕 단타 모드 활성화 시 자동 계산
+  // ===========================================
   useEffect(() => {
-    if (orderType === 'LIMIT' && !price && realPrice > 0) {
-      setPrice(realPrice.toFixed(2));
+    if (scalperSettings.enabled && realPrice > 0) {
+      const orderPrice = orderType === 'MARKET' ? realPrice : (parseFloat(price) || realPrice);
+      
+      if (orderPrice <= 0) return;
+      
+      const slPercent = scalperSettings.stopLossPercent;
+      const tpPercent = scalperSettings.takeProfitPercent;
+      
+      if (side === 'LONG') {
+        setStopLossPrice((orderPrice * (1 - slPercent / 100)).toFixed(2));
+        setTakeProfitPrice((orderPrice * (1 + tpPercent / 100)).toFixed(2));
+      } else {
+        setStopLossPrice((orderPrice * (1 + slPercent / 100)).toFixed(2));
+        setTakeProfitPrice((orderPrice * (1 - tpPercent / 100)).toFixed(2));
+      }
+      
+      setStopLossEnabled(true);
+      setTakeProfitEnabled(true);
     }
-  }, [orderType, realPrice, price]);
+  }, [scalperSettings.enabled, scalperSettings.stopLossPercent, scalperSettings.takeProfitPercent, realPrice, orderType, price, side]);
 
   // ===========================================
-  // ⭐ 수정: 퍼센트 버튼 핸들러 (수수료 포함)
+  // 🆕 단타 모드 토글 및 저장
   // ===========================================
-  const handlePercentageClick = (percent) => {
-    if (!account?.available_balance) {
-      toast.warning('잔액을 확인할 수 없습니다.');
-      return;
-    }
-
-    const maxQty = calculateMaxQuantity();
+  const toggleScalperMode = () => {
+    const newSettings = {
+      ...scalperSettings,
+      enabled: !scalperSettings.enabled,
+    };
+    setScalperSettings(newSettings);
+    saveScalperSettings(newSettings);
     
-    if (maxQty <= 0) {
-      toast.warning('가격을 확인해주세요.');
-      return;
-    }
-    
-    // 퍼센트에 따른 수량 계산
-    const targetQty = maxQty * (percent / 100);
-    
-    // 소수점 6자리로 반올림
-    const roundedQty = Math.floor(targetQty * 1000000) / 1000000;
-    
-    setQuantity(roundedQty.toString());
-    
-    if (percent === 100) {
-      toast.info(`100% 주문 (수수료 ${(leverage * FEE_RATE * 100).toFixed(3)}% 포함)`);
+    if (!newSettings.enabled) {
+      // 단타 모드 끄면 손절/익절 초기화
+      setStopLossEnabled(false);
+      setTakeProfitEnabled(false);
+      setStopLossPrice('');
+      setTakeProfitPrice('');
     }
   };
 
   // ===========================================
-  // 레버리지 슬라이더
+  // 🆕 단타 설정 변경 및 저장
   // ===========================================
-  const leverageMarks = [1, 5, 10, 25, 50, 75, 100, 125];
+  const updateScalperSettings = (field, value) => {
+    const newSettings = {
+      ...scalperSettings,
+      [field]: parseFloat(value) || 0,
+    };
+    setScalperSettings(newSettings);
+    saveScalperSettings(newSettings);
+  };
 
-  const handleLeverageChange = (e) => {
-    setLeverage(parseInt(e.target.value));
+  // ===========================================
+  // 100% 주문
+  // ===========================================
+  const handleMaxOrder = () => {
+    const maxQty = calculateMaxQuantity();
+    if (maxQty > 0) {
+      setQuantity(maxQty.toFixed(6));
+    }
   };
 
   // ===========================================
@@ -157,19 +190,27 @@ const FuturesOrderForm = ({ symbol, currentPrice }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!quantity || parseFloat(quantity) <= 0) {
-      toast.error('수량을 입력해주세요.');
+    if (!account) {
+      toast.error('계정 정보를 불러오는 중입니다');
       return;
     }
 
-    if (orderType === 'LIMIT' && (!price || parseFloat(price) <= 0)) {
-      toast.error('지정가를 입력해주세요.');
+    const qty = parseFloat(quantity);
+    if (!qty || qty <= 0) {
+      toast.error('수량을 입력하세요');
       return;
     }
 
-    // 잔액 확인
-    if (calculations.totalCost > parseFloat(account?.available_balance || 0)) {
-      toast.error(`잔액 부족: 필요 ${formatPrice(calculations.totalCost)} USDT`);
+    if (orderType === 'LIMIT') {
+      const limitPrice = parseFloat(price);
+      if (!limitPrice || limitPrice <= 0) {
+        toast.error('지정가를 입력하세요');
+        return;
+      }
+    }
+
+    if (calculations.totalCost > parseFloat(account.available_balance)) {
+      toast.error('잔액이 부족합니다');
       return;
     }
 
@@ -179,92 +220,142 @@ const FuturesOrderForm = ({ symbol, currentPrice }) => {
       const orderData = {
         symbol,
         side,
-        quantity: parseFloat(quantity),
+        quantity: qty,
         leverage,
-        order_type: orderType,
-        price: orderType === 'LIMIT' ? parseFloat(price) : null,
+        orderType,
+        price: orderType === 'LIMIT' ? parseFloat(price) : undefined,
+        stopLossPrice: stopLossEnabled ? parseFloat(stopLossPrice) : undefined,
+        takeProfitPrice: takeProfitEnabled ? parseFloat(takeProfitPrice) : undefined,
       };
 
-      await openPosition(orderData);
-      
-      // 성공 후 초기화
-      setQuantity('');
-      if (orderType === 'LIMIT') {
+      const result = await openPosition(orderData);
+
+      if (result.success) {
+        setQuantity('');
         setPrice('');
+        // 단타 모드가 아니면 손절/익절도 초기화
+        if (!scalperSettings.enabled) {
+          setStopLossPrice('');
+          setTakeProfitPrice('');
+          setStopLossEnabled(false);
+          setTakeProfitEnabled(false);
+        }
+        await fetchAccount();
       }
-      
-      // 계정 정보 새로고침
-      await fetchAccount();
-      
     } catch (error) {
-      // 에러는 openPosition에서 toast로 처리됨
       console.error('주문 실패:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  // 잔액 대비 사용 비율
-  const usagePercent = account?.available_balance > 0 
-    ? (calculations.totalCost / parseFloat(account.available_balance)) * 100 
-    : 0;
-
+  // ===========================================
+  // 렌더링
+  // ===========================================
   return (
     <div className="bg-gray-800 rounded-lg p-6">
-      <h2 className="text-xl font-bold mb-4">선물 주문</h2>
-
-      {/* 계정 정보 */}
-      <div className="bg-gray-700 rounded-lg p-4 mb-4">
-        <div className="flex justify-between text-sm mb-2">
-          <span className="text-gray-400">사용 가능</span>
-          <span className="text-white font-semibold">
-            {formatPrice(account?.available_balance || 0)} USDT
-          </span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-400">사용 중</span>
-          <span className="text-yellow-400">
-            {formatPrice(account?.margin_used || 0)} USDT
-          </span>
-        </div>
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-xl font-bold">주문</h3>
+        <button
+          type="button"
+          onClick={() => setShowSettings(!showSettings)}
+          className="text-gray-400 hover:text-accent"
+          title="단타 설정"
+        >
+          ⚙️
+        </button>
       </div>
 
+      {/* 🆕 단타 설정 패널 */}
+      {showSettings && (
+        <div className="mb-4 p-4 bg-gray-700 rounded">
+          <h4 className="text-sm font-semibold mb-3">단타 모드 기본 설정</h4>
+          
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-gray-400">기본 활성화</label>
+              <button
+                type="button"
+                onClick={toggleScalperMode}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  scalperSettings.enabled ? 'bg-accent' : 'bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    scalperSettings.enabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <label className="text-xs text-gray-400 w-20">손절:</label>
+              <input
+                type="number"
+                step="0.1"
+                value={scalperSettings.stopLossPercent}
+                onChange={(e) => updateScalperSettings('stopLossPercent', e.target.value)}
+                className="flex-1 px-2 py-1 bg-gray-600 rounded text-sm"
+              />
+              <span className="text-xs text-gray-400">%</span>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <label className="text-xs text-gray-400 w-20">익절:</label>
+              <input
+                type="number"
+                step="0.1"
+                value={scalperSettings.takeProfitPercent}
+                onChange={(e) => updateScalperSettings('takeProfitPercent', e.target.value)}
+                className="flex-1 px-2 py-1 bg-gray-600 rounded text-sm"
+              />
+              <span className="text-xs text-gray-400">%</span>
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-500 mt-3">
+            💡 이 설정은 저장되어 다음 주문에도 자동으로 적용됩니다
+          </p>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* 롱/숏 선택 */}
-        <div className="grid grid-cols-2 gap-2">
+        {/* 방향 선택 */}
+        <div className="flex space-x-2">
           <button
             type="button"
             onClick={() => setSide('LONG')}
-            className={`py-3 rounded-lg font-semibold transition-all ${
+            className={`flex-1 py-2 rounded font-semibold transition-colors ${
               side === 'LONG'
-                ? 'bg-green-600 text-white shadow-lg shadow-green-600/30'
+                ? 'bg-green-600 text-white'
                 : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
             }`}
           >
-            📈 롱 (매수)
+            롱 (매수)
           </button>
           <button
             type="button"
             onClick={() => setSide('SHORT')}
-            className={`py-3 rounded-lg font-semibold transition-all ${
+            className={`flex-1 py-2 rounded font-semibold transition-colors ${
               side === 'SHORT'
-                ? 'bg-red-600 text-white shadow-lg shadow-red-600/30'
+                ? 'bg-red-600 text-white'
                 : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
             }`}
           >
-            📉 숏 (매도)
+            숏 (매도)
           </button>
         </div>
 
-        {/* 주문 유형 */}
-        <div className="grid grid-cols-2 gap-2">
+        {/* 주문 타입 */}
+        <div className="flex space-x-2">
           <button
             type="button"
             onClick={() => setOrderType('MARKET')}
-            className={`py-2 rounded text-sm font-medium transition-all ${
+            className={`flex-1 py-2 rounded transition-colors ${
               orderType === 'MARKET'
-                ? 'bg-teal-600 text-white'
-                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                ? 'bg-accent text-dark font-semibold'
+                : 'bg-gray-700 text-gray-400'
             }`}
           >
             시장가
@@ -272,183 +363,195 @@ const FuturesOrderForm = ({ symbol, currentPrice }) => {
           <button
             type="button"
             onClick={() => setOrderType('LIMIT')}
-            className={`py-2 rounded text-sm font-medium transition-all ${
+            className={`flex-1 py-2 rounded transition-colors ${
               orderType === 'LIMIT'
-                ? 'bg-teal-600 text-white'
-                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                ? 'bg-accent text-dark font-semibold'
+                : 'bg-gray-700 text-gray-400'
             }`}
           >
             지정가
           </button>
         </div>
 
-        {/* 지정가 입력 */}
-        {orderType === 'LIMIT' && (
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">
-              지정가 (USDT)
-            </label>
-            <div className="relative">
-              <input
-                type="number"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="0.00"
-                step="0.01"
-                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
-              />
-              <button
-                type="button"
-                onClick={() => setPrice(realPrice.toFixed(2))}
-                className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-xs bg-gray-600 hover:bg-gray-500 rounded"
-              >
-                현재가
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              {side === 'LONG' ? '지정가 이하' : '지정가 이상'}에서 체결됩니다
-            </p>
-          </div>
-        )}
-
         {/* 레버리지 */}
         <div>
-          <div className="flex justify-between items-center mb-2">
-            <label className="text-sm text-gray-400">레버리지</label>
-            <span className="text-lg font-bold text-yellow-400">{leverage}x</span>
-          </div>
+          <label className="block text-sm text-gray-400 mb-2">
+            레버리지: {leverage}x
+          </label>
           <input
             type="range"
             min="1"
             max="125"
             value={leverage}
-            onChange={handleLeverageChange}
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+            onChange={(e) => setLeverage(parseInt(e.target.value))}
+            className="w-full"
           />
-          <div className="flex justify-between mt-2">
-            {leverageMarks.map((mark) => (
-              <button
-                key={mark}
-                type="button"
-                onClick={() => setLeverage(mark)}
-                className={`px-2 py-1 text-xs rounded transition-all ${
-                  leverage === mark
-                    ? 'bg-yellow-500 text-gray-900 font-bold'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                }`}
-              >
-                {mark}x
-              </button>
-            ))}
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>1x</span>
+            <span>25x</span>
+            <span>50x</span>
+            <span>125x</span>
           </div>
         </div>
+
+        {/* 지정가 (LIMIT 주문 시) */}
+        {orderType === 'LIMIT' && (
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">지정가 (USDT)</label>
+            <input
+              type="number"
+              step="0.01"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder={`현재가: ${formatPrice(realPrice)}`}
+              className="w-full px-4 py-2 bg-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              💡 현재가보다 낮은 가격 = 조건부 매수 대기
+            </p>
+          </div>
+        )}
 
         {/* 수량 */}
         <div>
-          <label className="block text-sm text-gray-400 mb-1">
-            수량 ({symbol.replace('USDT', '')})
-          </label>
+          <div className="flex justify-between items-center mb-2">
+            <label className="text-sm text-gray-400">수량</label>
+            <button
+              type="button"
+              onClick={handleMaxOrder}
+              className="text-xs text-accent hover:underline"
+            >
+              최대
+            </button>
+          </div>
           <input
             type="number"
+            step="0.000001"
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
             placeholder="0.000000"
-            step="0.000001"
-            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
+            className="w-full px-4 py-2 bg-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-accent"
+            required
           />
-          
-          {/* ⭐ 퍼센트 버튼 */}
-          <div className="grid grid-cols-4 gap-2 mt-2">
-            {[25, 50, 75, 100].map((percent) => (
-              <button
-                key={percent}
-                type="button"
-                onClick={() => handlePercentageClick(percent)}
-                className="py-2 text-sm bg-gray-700 hover:bg-gray-600 rounded font-medium transition-colors"
-              >
-                {percent}%
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-gray-500 mt-1">
-            최대: {formatPrice(calculateMaxQuantity())} {symbol.replace('USDT', '')}
-          </p>
         </div>
 
-        {/* 주문 요약 */}
-        <div className="bg-gray-700 rounded-lg p-4 space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-gray-400">포지션 가치</span>
-            <span>${formatPrice(calculations.positionValue)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">필요 증거금</span>
-            <span>{formatPrice(calculations.requiredMargin)} USDT</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">예상 수수료 (0.04%)</span>
-            <span className="text-yellow-400">{formatPrice(calculations.estimatedFee)} USDT</span>
-          </div>
-          <hr className="border-gray-600" />
-          <div className="flex justify-between font-semibold">
-            <span className="text-gray-400">총 필요 금액</span>
-            <span className={usagePercent > 100 ? 'text-red-400' : 'text-white'}>
-              {formatPrice(calculations.totalCost)} USDT
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">예상 청산가</span>
-            <span className="text-orange-400">${formatPrice(calculations.liquidationPrice)}</span>
-          </div>
-          
-          {/* 잔액 사용률 바 */}
-          <div className="mt-2">
-            <div className="h-2 bg-gray-600 rounded-full overflow-hidden">
-              <div 
-                className={`h-full transition-all ${
-                  usagePercent > 100 ? 'bg-red-500' : 
-                  usagePercent > 80 ? 'bg-yellow-500' : 'bg-teal-500'
-                }`}
-                style={{ width: `${Math.min(usagePercent, 100)}%` }}
-              />
+        {/* 🆕 단타 모드 상태 표시 */}
+        {scalperSettings.enabled && (
+          <div className="bg-accent/20 border border-accent/50 rounded p-3">
+            <div className="flex items-center space-x-2 mb-1">
+              <span className="text-accent font-semibold text-sm">⚡ 단타 모드 활성</span>
             </div>
-            <p className="text-xs text-gray-500 mt-1 text-right">
-              잔액의 {usagePercent.toFixed(1)}% 사용
+            <p className="text-xs text-gray-400">
+              손절 {scalperSettings.stopLossPercent}% / 익절 {scalperSettings.takeProfitPercent}% 자동 설정됨
             </p>
           </div>
+        )}
+
+        {/* 🆕 수동 손절/익절 (단타 모드가 아닐 때만) */}
+        {!scalperSettings.enabled && (
+          <div className="border-t border-gray-700 pt-4 space-y-3">
+            {/* 손절 */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-gray-400">손절 (Stop Loss)</label>
+                <input
+                  type="checkbox"
+                  checked={stopLossEnabled}
+                  onChange={(e) => setStopLossEnabled(e.target.checked)}
+                  className="w-4 h-4"
+                />
+              </div>
+              {stopLossEnabled && (
+                <input
+                  type="number"
+                  step="0.01"
+                  value={stopLossPrice}
+                  onChange={(e) => setStopLossPrice(e.target.value)}
+                  placeholder="손절 가격"
+                  className="w-full px-4 py-2 bg-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-red-500"
+                />
+              )}
+            </div>
+
+            {/* 익절 */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-gray-400">익절 (Take Profit)</label>
+                <input
+                  type="checkbox"
+                  checked={takeProfitEnabled}
+                  onChange={(e) => setTakeProfitEnabled(e.target.checked)}
+                  className="w-4 h-4"
+                />
+              </div>
+              {takeProfitEnabled && (
+                <input
+                  type="number"
+                  step="0.01"
+                  value={takeProfitPrice}
+                  onChange={(e) => setTakeProfitPrice(e.target.value)}
+                  placeholder="익절 가격"
+                  className="w-full px-4 py-2 bg-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 주문 요약 */}
+        <div className="bg-gray-700/50 p-4 rounded space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-400">포지션 가치:</span>
+            <span className="font-semibold">${formatPrice(calculations.positionValue)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">필요 증거금:</span>
+            <span>${formatPrice(calculations.requiredMargin)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">예상 수수료:</span>
+            <span className="text-red-400">${calculations.estimatedFee.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">청산가:</span>
+            <span className="text-orange-400">${formatPrice(calculations.liquidationPrice)}</span>
+          </div>
+          {stopLossEnabled && stopLossPrice && (
+            <div className="flex justify-between">
+              <span className="text-gray-400">손절가:</span>
+              <span className="text-red-400">${parseFloat(stopLossPrice).toFixed(2)}</span>
+            </div>
+          )}
+          {takeProfitEnabled && takeProfitPrice && (
+            <div className="flex justify-between">
+              <span className="text-gray-400">익절가:</span>
+              <span className="text-green-400">${parseFloat(takeProfitPrice).toFixed(2)}</span>
+            </div>
+          )}
+          <div className="flex justify-between pt-2 border-t border-gray-600">
+            <span className="text-gray-400 font-semibold">총 비용:</span>
+            <span className="font-bold">${calculations.totalCost.toFixed(2)}</span>
+          </div>
         </div>
 
-        {/* 제출 버튼 */}
+        {/* 주문 버튼 */}
         <button
           type="submit"
-          disabled={loading || !quantity || calculations.totalCost > parseFloat(account?.available_balance || 0)}
-          className={`w-full py-4 rounded-lg font-bold text-lg transition-all ${
+          disabled={loading || !quantity}
+          className={`w-full py-3 rounded-lg font-bold transition-colors ${
             side === 'LONG'
-              ? 'bg-green-600 hover:bg-green-700 disabled:bg-green-800'
-              : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
+              ? 'bg-green-600 hover:bg-green-700'
+              : 'bg-red-600 hover:bg-red-700'
           } disabled:opacity-50 disabled:cursor-not-allowed`}
         >
-          {loading ? (
-            <span className="flex items-center justify-center">
-              <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              처리 중...
-            </span>
-          ) : (
-            <>
-              {side === 'LONG' ? '📈 롱 포지션 열기' : '📉 숏 포지션 열기'}
-              {orderType === 'LIMIT' && ' (지정가)'}
-            </>
-          )}
+          {loading ? '처리 중...' : `${side === 'LONG' ? '롱' : '숏'} 진입 (${leverage}x)`}
         </button>
 
-        {/* 경고 메시지 */}
-        {leverage >= 50 && (
-          <p className="text-xs text-orange-400 text-center">
-            ⚠️ 고레버리지 거래는 높은 위험을 수반합니다
-          </p>
+        {/* 잔액 표시 */}
+        {account && (
+          <div className="text-center text-sm text-gray-400">
+            사용 가능: ${parseFloat(account.available_balance).toFixed(2)} USDT
+          </div>
         )}
       </form>
     </div>
