@@ -1,6 +1,6 @@
 // client/src/api/endpoints.js
 // =============================================================================
-// API 엔드포인트 정의 - 호가창/체결내역 추가
+// API 엔드포인트 정의 - 수정 버전
 // =============================================================================
 
 const API_V1 = '/api/v1';
@@ -22,9 +22,9 @@ export const endpoints = {
     klines: `${API_V1}/market/klines`,
     historical: (symbol) => `${API_V1}/market/historical/${symbol}`,
     
-    // ⭐ 추가: 호가창 & 체결내역
-    orderbook: `${API_V1}/market/orderbook`,  // GET /orderbook/{symbol}
-    trades: `${API_V1}/market/trades`,        // GET /trades/{symbol}
+    // 호가창 & 체결내역
+    orderbook: `${API_V1}/market/orderbook`,
+    trades: `${API_V1}/market/trades`,
   },
 
   // 현물 주문
@@ -51,10 +51,15 @@ export const endpoints = {
     closePosition: (positionId) => `${API_V1}/futures/positions/${positionId}/close`,
     orders: `${API_V1}/futures/orders`,
     transactions: `${API_V1}/futures/transactions`,
+    
+    // 🆕 포트폴리오 API (추가!)
     portfolioSummary: `${API_V1}/futures/portfolio/summary`,
+    portfolioTransactions: `${API_V1}/futures/portfolio/transactions`,  // ← 이게 없었음!
+    portfolioStats: `${API_V1}/futures/portfolio/stats`,
+    positionFills: (positionId) => `${API_V1}/futures/portfolio/fills/${positionId}`,
   },
 
-  // ⭐ 추가: 손절/익절 주문
+  // 손절/익절 주문
   stopOrders: {
     list: `${API_V1}/stop-orders`,
     create: `${API_V1}/stop-orders`,

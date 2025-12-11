@@ -332,8 +332,29 @@ const PositionsTab = ({
 // =============================================================================
 // 거래 내역 탭 컴포넌트
 // =============================================================================
+
 const TransactionsTab = ({ transactions }) => {
-  if (!transactions || transactions.length === 0) {
+  // 🆕 추가: 안전성 체크
+  if (!transactions) {
+    return (
+      <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">
+        <p>거래 내역을 불러오는 중...</p>
+      </div>
+    );
+  }
+
+  // 🆕 추가: 배열이 아닌 경우 처리
+  if (!Array.isArray(transactions)) {
+    console.error('❌ transactions is not an array:', transactions);
+    return (
+      <div className="bg-gray-800 rounded-lg p-8 text-center text-red-400">
+        <p>거래 내역을 불러오는데 문제가 발생했습니다</p>
+        <p className="text-sm text-gray-500 mt-2">데이터 형식 오류</p>
+      </div>
+    );
+  }
+
+  if (transactions.length === 0) {
     return (
       <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">
         <p>거래 내역이 없습니다</p>
@@ -362,42 +383,61 @@ const TransactionsTab = ({ transactions }) => {
             {transactions.map((tx) => {
               const pnlColor = tx.pnl >= 0 ? 'text-green-400' : 'text-red-400';
               const sideColor = tx.side === 'LONG' ? 'text-green-400' : 'text-red-400';
-              const actionLabel = {
-                OPEN: '🟢 진입',
-                CLOSE: '🔴 청산',
-                LIQUIDATION: '⚠️ 강청',
-                LIMIT_FILLED: '📝 체결',
-              };
+              const actionDisplay = {
+                'OPEN': '진입',
+                'CLOSE': '청산',
+                'STOP_LOSS': '손절',
+                'TAKE_PROFIT': '익절',
+                'LIQUIDATION': '강제청산',
+              }[tx.action] || tx.action;
 
               return (
-                <tr key={tx.id} className="border-b border-gray-700 hover:bg-gray-750">
+                <tr key={tx.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                   <td className="py-3 px-4 text-sm text-gray-400">
-                    {new Date(tx.timestamp).toLocaleString('ko-KR')}
+                    {new Date(tx.timestamp).toLocaleString('ko-KR', {
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
                   </td>
-                  <td className="py-3 px-4 font-semibold">
+                  <td className="py-3 px-4 font-medium">
                     {tx.symbol.replace('USDT', '')}
                   </td>
+                  <td className="py-3 px-4 text-sm">
+                    <span className={`px-2 py-1 rounded text-xs ${
+                      tx.action === 'OPEN' ? 'bg-blue-900/30 text-blue-400' :
+                      tx.action === 'CLOSE' ? 'bg-gray-700 text-gray-300' :
+                      tx.action === 'STOP_LOSS' ? 'bg-red-900/30 text-red-400' :
+                      tx.action === 'TAKE_PROFIT' ? 'bg-green-900/30 text-green-400' :
+                      'bg-orange-900/30 text-orange-400'
+                    }`}>
+                      {actionDisplay}
+                    </span>
+                  </td>
                   <td className="py-3 px-4">
-                    {actionLabel[tx.action] || tx.action}
+                    <span className={`font-semibold ${sideColor}`}>
+                      {tx.side}
+                    </span>
                   </td>
-                  <td className={`py-3 px-4 ${sideColor}`}>
-                    {tx.side}
-                  </td>
-                  <td className="py-3 px-4 text-right">
+                  <td className="py-3 px-4 text-right text-sm font-mono">
                     {parseFloat(tx.quantity).toFixed(6)}
                   </td>
-                  <td className="py-3 px-4 text-right">
-                    ${formatPrice(tx.price)}
+                  <td className="py-3 px-4 text-right font-mono">
+                    ${parseFloat(tx.price).toLocaleString('en-US', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </td>
-                  <td className="py-3 px-4 text-right text-yellow-400">
+                  <td className="py-3 px-4 text-right text-yellow-400 font-semibold">
                     {tx.leverage}x
                   </td>
                   <td className={`py-3 px-4 text-right font-semibold ${pnlColor}`}>
-                    {tx.pnl !== 0 && (tx.pnl > 0 ? '+' : '')}
-                    ${formatPrice(tx.pnl)}
+                    {tx.pnl >= 0 ? '+' : ''}
+                    ${parseFloat(tx.pnl).toFixed(2)}
                   </td>
-                  <td className="py-3 px-4 text-right text-gray-400">
-                    ${formatPrice(tx.fee)}
+                  <td className="py-3 px-4 text-right text-sm text-gray-400">
+                    ${parseFloat(tx.fee).toFixed(2)}
                   </td>
                 </tr>
               );

@@ -1,16 +1,25 @@
 # app/routers/market.py
+# =============================================================================
+# 마켓 데이터 API - 호가창 엔드포인트 추가
+# =============================================================================
 import asyncio
 from datetime import datetime, timedelta
-import logging  # ✅ 추가
+import logging
 import random
 
 from fastapi import APIRouter, HTTPException
-import httpx  # ✅ 추가
+import httpx
 
-from app.services.binance_service import get_coin_info, get_historical_data, get_multiple_prices
+from app.services.binance_service import (
+    get_coin_info,
+    get_historical_data,
+    get_multiple_prices,
+    get_order_book,  # 🆕 추가!
+    get_recent_trades,  # 🆕 추가!
+)
 
 router = APIRouter(prefix="/market", tags=["market"])
-logger = logging.getLogger(__name__)  # ✅ 추가
+logger = logging.getLogger(__name__)
 
 # 코인 메타데이터
 COINS_METADATA = {
@@ -44,6 +53,10 @@ COINS_METADATA = {
     },
 }
 
+
+# =============================================================================
+# 기존 엔드포인트들
+# =============================================================================
 
 @router.get("/coins")
 async def get_all_coins():
@@ -106,21 +119,9 @@ async def get_historical_prices(symbol: str, interval: str = "1h", limit: int = 
     """과거 가격 데이터"""
     try:
         valid_binance_intervals = [
-            "1m",
-            "3m",
-            "5m",
-            "15m",
-            "30m",
-            "1h",
-            "2h",
-            "4h",
-            "6h",
-            "8h",
-            "12h",
-            "1d",
-            "3d",
-            "1w",
-            "1M",
+            "1m", "3m", "5m", "15m", "30m",
+            "1h", "2h", "4h", "6h", "8h", "12h",
+            "1d", "3d", "1w", "1M",
         ]
         simulated_intervals = ["1s", "5s", "15s", "30s"]
 
@@ -135,16 +136,11 @@ async def get_historical_prices(symbol: str, interval: str = "1h", limit: int = 
 
         if limit > 1000:
             limit = 1000
-        elif limit < 1:
-            limit = 24
 
         data = await get_historical_data(symbol, actual_interval, limit)
 
-        if not data:
-            raise HTTPException(status_code=404, detail="No historical data found")
-
         if use_simulation:
-            data = simulate_sub_minute_data(data, interval, limit)
+            data = simulate_short_intervals(data, interval, limit)
 
         return data
 
@@ -154,39 +150,44 @@ async def get_historical_prices(symbol: str, interval: str = "1h", limit: int = 
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def simulate_sub_minute_data(
-    minute_data: list[dict], target_interval: str, target_limit: int
-) -> list[dict]:
-    """1분 데이터를 기반으로 초 단위 데이터 시뮬레이션"""
-    seconds_map = {"1s": 1, "5s": 5, "15s": 15, "30s": 30}
-    seconds = seconds_map.get(target_interval, 1)
+def simulate_short_intervals(original_data: list, target_interval: str, target_limit: int):
+    """1초/5초/15초/30초 인터벌 시뮬레이션"""
+    if not original_data:
+        return []
 
+    interval_seconds = {
+        "1s": 1,
+        "5s": 5,
+        "15s": 15,
+        "30s": 30,
+    }
+
+    seconds = interval_seconds.get(target_interval, 60)
     simulated = []
 
-    for candle in minute_data:
-        num_sub_candles = 60 // seconds
-        base_timestamp = datetime.fromisoformat(candle["timestamp"])
+    for i in range(len(original_data) - 1):
+        current = original_data[i]
+        next_candle = original_data[i + 1]
 
-        price_range = candle["high"] - candle["low"]
-        current_price = candle["open"]
+        start_price = float(current["close"])
+        end_price = float(next_candle["open"])
 
-        for i in range(num_sub_candles):
-            price_change = random.uniform(-price_range * 0.1, price_range * 0.1)
-            next_price = max(candle["low"], min(candle["high"], current_price + price_change))
+        steps = 60 // seconds
 
-            if i == num_sub_candles - 1:
-                next_price = candle["close"]
+        for step in range(steps):
+            progress = (step + 1) / steps
+            interpolated_price = start_price + (end_price - start_price) * progress
+            next_price = interpolated_price + random.uniform(-10, 10)
 
-            sub_candle = {
-                "timestamp": (base_timestamp + timedelta(seconds=i * seconds)).isoformat(),
-                "open": current_price,
-                "high": max(current_price, next_price) + random.uniform(0, price_range * 0.05),
-                "low": min(current_price, next_price) - random.uniform(0, price_range * 0.05),
+            simulated.append({
+                "time": current["time"] + step * seconds * 1000,
+                "open": current_price if step == 0 else simulated[-1]["close"],
+                "high": max(interpolated_price, next_price),
+                "low": min(interpolated_price, next_price),
                 "close": next_price,
-                "volume": candle["volume"] / num_sub_candles,
-            }
+                "volume": float(current["volume"]) / steps,
+            })
 
-            simulated.append(sub_candle)
             current_price = next_price
 
             if len(simulated) >= target_limit:
@@ -210,32 +211,62 @@ async def get_all_prices():
 
 
 @router.get("/trades/{symbol}")
-async def get_recent_trades(symbol: str, limit: int = 20):
+async def get_recent_trades_api(symbol: str, limit: int = 20):
     """바이낸스 실시간 체결 내역"""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                "https://api.binance.com/api/v3/trades", params={"symbol": symbol, "limit": limit}
-            )
+        trades = await get_recent_trades(symbol, limit)
+        
+        if not trades:
+            raise HTTPException(status_code=503, detail="체결 내역을 가져올 수 없습니다")
+        
+        return trades
 
-            if response.status_code == 200:
-                trades = response.json()
-                return [
-                    {
-                        "id": trade["id"],
-                        "price": float(trade["price"]),
-                        "quantity": float(trade["qty"]),
-                        "time": datetime.fromtimestamp(trade["time"] / 1000).isoformat(),
-                        "isBuyerMaker": trade["isBuyerMaker"],
-                    }
-                    for trade in trades
-                ]
-            else:
-                raise HTTPException(status_code=503, detail="Binance API 오류")
-
-    except httpx.TimeoutException:
-        logger.error(f"❌ Binance trades timeout: {symbol}")
-        raise HTTPException(status_code=503, detail="Binance API 타임아웃")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Get trades failed: {e}")
         raise HTTPException(status_code=500, detail=f"체결 내역 조회 실패: {str(e)}")
+
+
+# =============================================================================
+# 🆕 새로운 엔드포인트: 호가창
+# =============================================================================
+
+@router.get("/orderbook/{symbol}")
+async def get_orderbook_api(symbol: str, limit: int = 20):
+    """
+    호가창 조회
+    
+    Parameters:
+    - symbol: 거래 심볼 (예: BTCUSDT)
+    - limit: 호가 개수 (5, 10, 20, 50, 100, 500, 1000, 5000)
+    
+    Returns:
+    - bids: 매수 호가 [[가격, 수량], ...]
+    - asks: 매도 호가 [[가격, 수량], ...]
+    """
+    try:
+        # 유효한 limit 값 체크
+        valid_limits = [5, 10, 20, 50, 100, 500, 1000, 5000]
+        if limit not in valid_limits:
+            # 가장 가까운 유효한 값으로 조정
+            limit = min(valid_limits, key=lambda x: abs(x - limit))
+        
+        # binance_service의 get_order_book 호출
+        order_book = await get_order_book(symbol, limit)
+        
+        if not order_book or (not order_book.get("bids") and not order_book.get("asks")):
+            raise HTTPException(status_code=503, detail="호가 데이터를 가져올 수 없습니다")
+        
+        # Decimal을 float로 변환 (JSON 직렬화 위해)
+        return {
+            "bids": [[float(price), float(qty)] for price, qty in order_book["bids"]],
+            "asks": [[float(price), float(qty)] for price, qty in order_book["asks"]],
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Get orderbook failed: {e}")
+        raise HTTPException(status_code=500, detail=f"호가창 조회 실패: {str(e)}")
