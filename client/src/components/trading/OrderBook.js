@@ -1,14 +1,14 @@
 // client/src/components/trading/OrderBook.js
 // =============================================================================
-// 호가창 컴포넌트 - 실제 Binance API 연동 버전
+// 호가창 컴포넌트 - 개선 버전 (안정성 강화)
 // =============================================================================
 //
-// 📌 개선 사항:
-// 1. Mock 데이터 대신 실제 Binance API 호출
-// 2. WebSocket 실시간 업데이트 지원
-// 3. 호가 클릭 시 주문 폼에 가격 입력
-// 4. 스프레드 표시
-// 5. 누적 물량 표시
+// 📌 주요 개선 사항:
+// 1. WebSocket과 REST 폴링 경쟁 조건 해결
+// 2. 데이터 정규화 강화 (배열/객체 형식 통합)
+// 3. WebSocket 재연결 로직 개선
+// 4. 메모리 누수 방지
+// 5. 에러 처리 강화
 //
 // =============================================================================
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -19,7 +19,7 @@ import { formatPrice } from '../../utils/formatPrice';
 const OrderBook = ({ 
   symbol, 
   currentPrice,
-  onPriceClick,  // 호가 클릭 시 가격 전달
+  onPriceClick,
   maxRows = 15,
 }) => {
   const [orderBook, setOrderBook] = useState({ asks: [], bids: [] });
@@ -27,31 +27,72 @@ const OrderBook = ({
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [highlightedPrice, setHighlightedPrice] = useState(null);
+  const [isWsConnected, setIsWsConnected] = useState(false);
   
   const wsRef = useRef(null);
   const isMountedRef = useRef(true);
+  const reconnectTimeoutRef = useRef(null);
+  const pollingIntervalRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
 
   // =========================================================================
-  // 호가 데이터 페칭 (REST API)
+  // 📌 개선 1: 데이터 정규화 함수 (배열/객체 형식 통합)
+  // =========================================================================
+  const normalizeOrderBookData = useCallback((data) => {
+    if (!data) return { asks: [], bids: [] };
+
+    const normalizeEntry = (entry) => {
+      if (Array.isArray(entry)) {
+        // 배열 형식: [price, quantity]
+        return {
+          price: parseFloat(entry[0]) || 0,
+          quantity: parseFloat(entry[1]) || 0,
+        };
+      } else if (typeof entry === 'object') {
+        // 객체 형식: {price, quantity} or {price, qty}
+        return {
+          price: parseFloat(entry.price || entry[0]) || 0,
+          quantity: parseFloat(entry.quantity || entry.qty || entry[1]) || 0,
+        };
+      }
+      return { price: 0, quantity: 0 };
+    };
+
+    const asks = (data.asks || [])
+      .map(normalizeEntry)
+      .filter(item => item.price > 0 && item.quantity > 0);
+    
+    const bids = (data.bids || [])
+      .map(normalizeEntry)
+      .filter(item => item.price > 0 && item.quantity > 0);
+
+    return { asks, bids };
+  }, []);
+
+  // =========================================================================
+  // 📌 개선 2: REST API 호가 데이터 페칭
   // =========================================================================
   const fetchOrderBook = useCallback(async () => {
+    // WebSocket이 연결되어 있으면 REST 폴링 스킵
+    if (isWsConnected) {
+      return;
+    }
+
     try {
       const response = await axios.get(
-        `${endpoints.market.orderbook || '/api/v1/market/orderbook'}/${symbol}`,
-        { params: { limit: maxRows * 2 } }
+        `${endpoints.market.orderbook}/${symbol}`,
+        { params: { limit: maxRows * 2 }, timeout: 5000 }
       );
       
       if (isMountedRef.current && response.data) {
-        setOrderBook({
-          asks: response.data.asks || [],
-          bids: response.data.bids || [],
-        });
+        const normalized = normalizeOrderBookData(response.data);
+        setOrderBook(normalized);
         setLastUpdate(new Date());
         setError(null);
       }
     } catch (err) {
       console.error('호가 데이터 로드 실패:', err);
-      // API 없으면 Mock 데이터 생성
       if (isMountedRef.current) {
         generateMockOrderBook();
       }
@@ -60,7 +101,7 @@ const OrderBook = ({
         setLoading(false);
       }
     }
-  }, [symbol, maxRows]);
+  }, [symbol, maxRows, isWsConnected, normalizeOrderBookData]);
 
   // =========================================================================
   // Mock 데이터 생성 (API 실패 시 폴백)
@@ -70,107 +111,149 @@ const OrderBook = ({
     const spread = basePrice * 0.0001;
     
     const asks = Array.from({ length: maxRows }, (_, i) => ({
-      price: (basePrice + spread * (i + 1)).toFixed(2),
-      quantity: (Math.random() * 5 + 0.1).toFixed(6),
+      price: basePrice + spread * (i + 1),
+      quantity: Math.random() * 5 + 0.1,
     })).reverse();
     
     const bids = Array.from({ length: maxRows }, (_, i) => ({
-      price: (basePrice - spread * (i + 1)).toFixed(2),
-      quantity: (Math.random() * 5 + 0.1).toFixed(6),
+      price: basePrice - spread * (i + 1),
+      quantity: Math.random() * 5 + 0.1,
     }));
     
     setOrderBook({ asks, bids });
     setLastUpdate(new Date());
+    setError('Mock 데이터 사용 중');
   }, [currentPrice, maxRows]);
 
   // =========================================================================
-  // WebSocket 연결 (실시간 업데이트)
+  // 📌 개선 3: WebSocket 연결 관리 (재연결 로직 강화)
   // =========================================================================
   const connectWebSocket = useCallback(() => {
-    // WebSocket URL (환경변수 또는 기본값)
-    const wsBaseUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:8000';
+    // 최대 재연결 시도 횟수 초과시 중단
+    if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+      console.warn('최대 재연결 시도 횟수 초과, REST 폴링으로 전환');
+      setIsWsConnected(false);
+      return;
+    }
+
+    const wsBaseUrl = process.env.REACT_APP_WS_URL || 
+      (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + 
+      '//' + window.location.host;
     const wsUrl = `${wsBaseUrl}/ws/orderbook/${symbol}`;
     
     try {
+      // 기존 WebSocket 정리
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+
       wsRef.current = new WebSocket(wsUrl);
       
       wsRef.current.onopen = () => {
         console.log('📊 호가창 WebSocket 연결됨');
+        setIsWsConnected(true);
+        setError(null);
+        reconnectAttemptsRef.current = 0; // 재연결 카운터 리셋
       };
       
       wsRef.current.onmessage = (event) => {
+        if (!isMountedRef.current) return;
+
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'orderbook' && isMountedRef.current) {
-            setOrderBook({
-              asks: data.asks || data.data?.asks || [],
-              bids: data.bids || data.data?.bids || [],
-            });
+          
+          if (data.type === 'orderbook') {
+            const bookData = data.data || data;
+            const normalized = normalizeOrderBookData(bookData);
+            
+            setOrderBook(normalized);
             setLastUpdate(new Date());
+            setError(null);
           }
         } catch (e) {
-          // 파싱 실패 무시
+          console.warn('WebSocket 메시지 파싱 실패:', e);
         }
       };
       
-      wsRef.current.onerror = () => {
-        console.warn('호가창 WebSocket 연결 실패, REST 폴링 사용');
+      wsRef.current.onerror = (error) => {
+        console.warn('호가창 WebSocket 오류:', error);
+        setIsWsConnected(false);
       };
       
       wsRef.current.onclose = () => {
-        // 5초 후 재연결 시도
-        setTimeout(() => {
-          if (isMountedRef.current) {
-            connectWebSocket();
-          }
-        }, 5000);
+        setIsWsConnected(false);
+        
+        // 재연결 시도
+        if (isMountedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
+          reconnectAttemptsRef.current += 1;
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+          
+          console.log(`WebSocket 재연결 시도 ${reconnectAttemptsRef.current}/${maxReconnectAttempts} (${delay}ms 후)`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            if (isMountedRef.current) {
+              connectWebSocket();
+            }
+          }, delay);
+        }
       };
     } catch (e) {
       console.warn('WebSocket 연결 실패:', e);
+      setIsWsConnected(false);
     }
-  }, [symbol]);
+  }, [symbol, normalizeOrderBookData]);
 
   // =========================================================================
-  // 초기화 및 정리
+  // 📌 개선 4: 초기화 및 정리 (메모리 누수 방지)
   // =========================================================================
   useEffect(() => {
     isMountedRef.current = true;
+    reconnectAttemptsRef.current = 0;
     
+    // 초기 데이터 로드
     fetchOrderBook();
+    
+    // WebSocket 연결 시도
     connectWebSocket();
     
-    // REST 폴링 백업 (2초마다)
-    const interval = setInterval(fetchOrderBook, 2000);
+    // REST 폴링 백업 (WebSocket이 연결되지 않았을 때만)
+    pollingIntervalRef.current = setInterval(() => {
+      if (!isWsConnected) {
+        fetchOrderBook();
+      }
+    }, 3000);
     
     return () => {
       isMountedRef.current = false;
+      
+      // WebSocket 정리
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
-      clearInterval(interval);
+      
+      // 타이머 정리
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
     };
-  }, [symbol, fetchOrderBook, connectWebSocket]);
+  }, [symbol, fetchOrderBook, connectWebSocket, isWsConnected]);
 
   // =========================================================================
   // 호가 데이터 처리
   // =========================================================================
   const { processedAsks, processedBids, spread, spreadPercent, maxQuantity } = useMemo(() => {
     // 매도 호가 (낮은 가격이 아래로)
-    const asks = (orderBook.asks || [])
+    const asks = orderBook.asks
       .slice(0, maxRows)
-      .map((ask) => ({
-        price: parseFloat(ask.price || ask[0]),
-        quantity: parseFloat(ask.quantity || ask[1]),
-      }))
       .sort((a, b) => a.price - b.price);
 
     // 매수 호가 (높은 가격이 위로)
-    const bids = (orderBook.bids || [])
+    const bids = orderBook.bids
       .slice(0, maxRows)
-      .map((bid) => ({
-        price: parseFloat(bid.price || bid[0]),
-        quantity: parseFloat(bid.quantity || bid[1]),
-      }))
       .sort((a, b) => b.price - a.price);
 
     // 누적 물량 계산
@@ -243,16 +326,29 @@ const OrderBook = ({
     <div className="bg-gray-800 rounded-lg overflow-hidden">
       {/* 헤더 */}
       <div className="flex items-center justify-between p-4 border-b border-gray-700">
-        <h2 className="text-xl font-bold text-white">호가창</h2>
+        <div className="flex items-center space-x-2">
+          <h3 className="text-lg font-bold">호가창</h3>
+          {/* 연결 상태 표시 */}
+          <div className={`w-2 h-2 rounded-full ${isWsConnected ? 'bg-green-500' : 'bg-yellow-500'}`} 
+               title={isWsConnected ? 'WebSocket 연결됨' : 'REST API 사용 중'}
+          />
+        </div>
         {lastUpdate && (
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-gray-400">
             {lastUpdate.toLocaleTimeString()}
           </span>
         )}
       </div>
 
+      {/* 에러 표시 */}
+      {error && (
+        <div className="px-4 py-2 bg-yellow-900/20 border-b border-yellow-700">
+          <p className="text-xs text-yellow-400">{error}</p>
+        </div>
+      )}
+
       {/* 컬럼 헤더 */}
-      <div className="grid grid-cols-3 gap-2 px-4 py-2 text-xs text-gray-400 border-b border-gray-700">
+      <div className="grid grid-cols-3 gap-2 px-4 py-2 bg-gray-700/30 text-xs text-gray-400 font-semibold">
         <span>가격(USDT)</span>
         <span className="text-right">수량</span>
         <span className="text-right">누적</span>
@@ -262,7 +358,7 @@ const OrderBook = ({
       <div className="max-h-[240px] overflow-y-auto">
         {processedAsks.map((ask, idx) => (
           <OrderRow
-            key={`ask-${idx}`}
+            key={`ask-${idx}-${ask.price}`}
             type="ask"
             price={ask.price}
             quantity={ask.quantity}
@@ -274,19 +370,14 @@ const OrderBook = ({
         ))}
       </div>
 
-      {/* 현재가 & 스프레드 */}
-      <div className="px-4 py-3 bg-gray-900/50 border-y border-gray-700">
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="text-xs text-gray-400">현재가</span>
-            <p className="text-xl font-bold text-accent">
-              {formatPrice(currentPrice)}
-            </p>
-          </div>
+      {/* 스프레드 */}
+      <div className="px-4 py-2 bg-gray-700/50">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-gray-400">스프레드</span>
           <div className="text-right">
-            <span className="text-xs text-gray-400">스프레드</span>
-            <p className="text-sm text-yellow-400">
-              {formatPrice(spread)} ({spreadPercent.toFixed(3)}%)
+            <p className="font-mono text-white">${spread.toFixed(2)}</p>
+            <p className="text-gray-400 text-xs">
+              ({spreadPercent.toFixed(3)}%)
             </p>
           </div>
         </div>
@@ -296,7 +387,7 @@ const OrderBook = ({
       <div className="max-h-[240px] overflow-y-auto">
         {processedBids.map((bid, idx) => (
           <OrderRow
-            key={`bid-${idx}`}
+            key={`bid-${idx}-${bid.price}`}
             type="bid"
             price={bid.price}
             quantity={bid.quantity}
