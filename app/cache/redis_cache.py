@@ -1,8 +1,6 @@
 # app/cache/redis_cache.py
 """
 Redis 캐시 매니저
-- 가격 데이터 캐싱 (TTL: 1초)
-- API 호출 90% 감소
 """
 
 import json
