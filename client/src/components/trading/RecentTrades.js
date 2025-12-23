@@ -7,7 +7,7 @@ const RecentTrades = ({ symbol }) => {
 
   useEffect(() => {
     fetchTrades();
-    const interval = setInterval(fetchTrades, 2000); // 2초마다 갱신
+    const interval = setInterval(fetchTrades, 2000);
     return () => clearInterval(interval);
   }, [symbol]);
 
@@ -19,24 +19,51 @@ const RecentTrades = ({ symbol }) => {
       
       const data = await response.json();
       
-      const formattedTrades = data.map(trade => ({
-        id: trade.id,
-        price: trade.price,
-        quantity: trade.quantity,
-        time: new Date(trade.time).toLocaleTimeString('ko-KR', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        }),
-        side: trade.isBuyerMaker ? 'SELL' : 'BUY' // buyer가 maker면 매도 체결
-      }));
+      // 🆕 수정: API 응답 구조에 맞게 qty → quantity 매핑
+      const formattedTrades = (data || []).map(trade => {
+        // price와 qty가 문자열로 오는 경우 처리
+        const price = parseFloat(trade?.price) || 0;
+        const quantity = parseFloat(trade?.qty) || 0; // 🆕 qty로 수정
+        const time = trade?.time ? new Date(trade.time) : new Date();
+        
+        return {
+          id: trade?.id || Date.now() + Math.random(),
+          price: price,
+          quantity: quantity,
+          time: time.toLocaleTimeString('ko-KR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          }),
+          // 🆕 API에 맞게 isBuyerMaker 필드 확인 필요
+          side: trade?.isBuyerMaker === true ? 'SELL' : 'BUY'
+        };
+      });
       
       setTrades(formattedTrades);
       setLoading(false);
     } catch (error) {
       console.error('체결 내역 조회 실패:', error);
+      setTrades([]);
       setLoading(false);
     }
+  };
+
+  // 안전한 숫자 포맷팅 함수
+  const formatPrice = (price) => {
+    const num = Number(price);
+    if (isNaN(num) || num === 0) return '0.00';
+    return num.toLocaleString('en-US', { 
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2 
+    });
+  };
+
+  // 안전한 수량 포맷팅 함수
+  const formatQuantity = (quantity) => {
+    const num = Number(quantity);
+    if (isNaN(num) || num === 0) return '0.000000';
+    return num.toFixed(6);
   };
 
   return (
@@ -62,13 +89,13 @@ const RecentTrades = ({ symbol }) => {
             trades.map((trade) => (
               <div key={trade.id} className="grid grid-cols-3 text-sm py-1 hover:bg-gray-700 transition-colors">
                 <span className={`font-medium ${trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>
-                  ${trade.price.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                  ${formatPrice(trade.price)}
                 </span>
                 <span className="text-right text-gray-300">
-                  {trade.quantity.toFixed(6)}
+                  {formatQuantity(trade.quantity)}
                 </span>
                 <span className="text-right text-gray-400 text-xs">
-                  {trade.time}
+                  {trade.time || '--:--:--'}
                 </span>
               </div>
             ))
