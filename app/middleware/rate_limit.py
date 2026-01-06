@@ -16,7 +16,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = logging.getLogger(__name__)
 
-
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Rate Limiting 미들웨어"""
 
@@ -71,7 +70,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         response.headers["X-RateLimit-Reset"] = str(int((now + self.window).timestamp()))
 
         return response
-
 
 class APIKeyRateLimiter:
     """
@@ -139,7 +137,6 @@ class APIKeyRateLimiter:
             except Exception as e:
                 logger.error(f"❌ Rate limiter cleanup error: {e}")
                 await asyncio.sleep(60)  # 에러 시 1분 후 재시도
-
 
 # 싱글톤 인스턴스
 rate_limiter = APIKeyRateLimiter()

@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 BINANCE_API_BASE = "https://api.binance.com"
 
-
 async def get_current_price_cached(symbol: str) -> Decimal:
     """
     캐싱을 활용한 현재가 조회
@@ -42,7 +41,6 @@ async def get_current_price_cached(symbol: str) -> Decimal:
     logger.debug(f"📡 API 호출: {symbol} = ${price}")
 
     return price
-
 
 async def get_multiple_prices_batch(symbols: list[str]) -> dict[str, Decimal]:
     """

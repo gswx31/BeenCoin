@@ -18,11 +18,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
 
-
 # ================================
 # 커스텀 예외 클래스
 # ================================
-
 
 class BeenCoinException(Exception):
     """기본 예외 클래스"""
@@ -33,14 +31,12 @@ class BeenCoinException(Exception):
         self.error_code = error_code or "BEENCOIN_ERROR"
         super().__init__(detail)
 
-
 class InsufficientBalanceError(BeenCoinException):
     """잔액 부족"""
 
     def __init__(self, required: float = 0, available: float = 0):
         detail = f"잔액이 부족합니다. 필요: ${required:,.2f}, 보유: ${available:,.2f}"
         super().__init__(detail, 400, "INSUFFICIENT_BALANCE")
-
 
 class InsufficientQuantityError(BeenCoinException):
     """수량 부족"""
@@ -49,14 +45,12 @@ class InsufficientQuantityError(BeenCoinException):
         detail = f"수량이 부족합니다. 필요: {required}, 보유: {available}"
         super().__init__(detail, 400, "INSUFFICIENT_QUANTITY")
 
-
 class InvalidSymbolError(BeenCoinException):
     """잘못된 심볼"""
 
     def __init__(self, symbol: str):
         detail = f"지원하지 않는 심볼입니다: {symbol}"
         super().__init__(detail, 400, "INVALID_SYMBOL")
-
 
 class PositionNotFoundError(BeenCoinException):
     """포지션 없음"""
@@ -65,13 +59,11 @@ class PositionNotFoundError(BeenCoinException):
         detail = "포지션을 찾을 수 없습니다" + (f" (ID: {position_id})" if position_id else "")
         super().__init__(detail, 404, "POSITION_NOT_FOUND")
 
-
 class AccountNotFoundError(BeenCoinException):
     """계정 없음"""
 
     def __init__(self):
         super().__init__("계정을 찾을 수 없습니다", 404, "ACCOUNT_NOT_FOUND")
-
 
 class UnauthorizedError(BeenCoinException):
     """인증 오류"""
@@ -79,13 +71,11 @@ class UnauthorizedError(BeenCoinException):
     def __init__(self, detail: str = "인증이 필요합니다"):
         super().__init__(detail, 401, "UNAUTHORIZED")
 
-
 class ForbiddenError(BeenCoinException):
     """권한 오류"""
 
     def __init__(self, detail: str = "권한이 없습니다"):
         super().__init__(detail, 403, "FORBIDDEN")
-
 
 class MarketDataError(BeenCoinException):
     """시장 데이터 오류"""
@@ -93,11 +83,9 @@ class MarketDataError(BeenCoinException):
     def __init__(self, detail: str = "시장 데이터를 가져올 수 없습니다"):
         super().__init__(detail, 503, "MARKET_DATA_ERROR")
 
-
 # ================================
 # 에러 핸들러 등록 함수
 # ================================
-
 
 def register_error_handlers(app: FastAPI):
     """FastAPI 앱에 에러 핸들러 등록"""
@@ -168,11 +156,9 @@ def register_error_handlers(app: FastAPI):
 
     logger.info("✅ 에러 핸들러 등록 완료")
 
-
 # ================================
 # 유틸리티 함수
 # ================================
-
 
 def create_error_response(
     status_code: int, error: str, detail: str, errors: list = None

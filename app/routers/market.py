@@ -53,7 +53,6 @@ COINS_METADATA = {
     },
 }
 
-
 # =============================================================================
 # 기존 엔드포인트들
 # =============================================================================
@@ -95,7 +94,6 @@ async def get_all_coins():
             {**meta, "price": "0", "change": "0", "volume": "0"} for meta in COINS_METADATA.values()
         ]
 
-
 @router.get("/coin/{symbol}")
 async def get_coin_detail(symbol: str):
     """특정 코인의 상세 정보"""
@@ -112,7 +110,6 @@ async def get_coin_detail(symbol: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 @router.get("/historical/{symbol}")
 async def get_historical_prices(symbol: str, interval: str = "1h", limit: int = 24):
@@ -148,7 +145,6 @@ async def get_historical_prices(symbol: str, interval: str = "1h", limit: int = 
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 def simulate_short_intervals(original_data: list, target_interval: str, target_limit: int):
     """1초/5초/15초/30초 인터벌 시뮬레이션"""
@@ -198,7 +194,6 @@ def simulate_short_intervals(original_data: list, target_interval: str, target_l
 
     return simulated[-target_limit:]
 
-
 @router.get("/prices")
 async def get_all_prices():
     """모든 지원 코인의 현재 가격만 조회"""
@@ -209,16 +204,15 @@ async def get_all_prices():
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 @router.get("/trades/{symbol}")
 async def get_recent_trades_api(symbol: str, limit: int = 20):
     """바이낸스 실시간 체결 내역"""
     try:
         trades = await get_recent_trades(symbol, limit)
-        
+
         if not trades:
             raise HTTPException(status_code=503, detail="체결 내역을 가져올 수 없습니다")
-        
+
         return trades
 
     except HTTPException:
@@ -226,7 +220,6 @@ async def get_recent_trades_api(symbol: str, limit: int = 20):
     except Exception as e:
         logger.error(f"❌ Get trades failed: {e}")
         raise HTTPException(status_code=500, detail=f"체결 내역 조회 실패: {str(e)}")
-
 
 # =============================================================================
 # 🆕 새로운 엔드포인트: 호가창
@@ -236,11 +229,11 @@ async def get_recent_trades_api(symbol: str, limit: int = 20):
 async def get_orderbook_api(symbol: str, limit: int = 20):
     """
     호가창 조회
-    
+
     Parameters:
     - symbol: 거래 심볼 (예: BTCUSDT)
     - limit: 호가 개수 (5, 10, 20, 50, 100, 500, 1000, 5000)
-    
+
     Returns:
     - bids: 매수 호가 [[가격, 수량], ...]
     - asks: 매도 호가 [[가격, 수량], ...]
@@ -251,13 +244,13 @@ async def get_orderbook_api(symbol: str, limit: int = 20):
         if limit not in valid_limits:
             # 가장 가까운 유효한 값으로 조정
             limit = min(valid_limits, key=lambda x: abs(x - limit))
-        
+
         # binance_service의 get_order_book 호출
         order_book = await get_order_book(symbol, limit)
-        
+
         if not order_book or (not order_book.get("bids") and not order_book.get("asks")):
             raise HTTPException(status_code=503, detail="호가 데이터를 가져올 수 없습니다")
-        
+
         # Decimal을 float로 변환 (JSON 직렬화 위해)
         return {
             "bids": [[float(price), float(qty)] for price, qty in order_book["bids"]],

@@ -10,7 +10,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 class CacheManager:
     """스레드 안전한 캐시 매니저"""
 
@@ -97,7 +96,6 @@ class CacheManager:
                     logger.info(f"🗑️ 만료 캐시 정리: {len(expired_keys)}개")
         except Exception as e:
             logger.error(f"❌ 캐시 정리 오류: {e}")
-
 
 # 싱글톤 인스턴스
 cache_manager = CacheManager()

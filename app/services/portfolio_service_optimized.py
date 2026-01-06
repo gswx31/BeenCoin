@@ -13,7 +13,6 @@ from app.models.database import SpotAccount
 
 logger = logging.getLogger(__name__)
 
-
 async def get_portfolio_summary_optimized(session: Session, user_id: int) -> dict:
     """
     N+1 쿼리 문제 해결

@@ -9,7 +9,6 @@ from app.services.binance_service import get_current_price
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
-
 @router.websocket("/prices/{symbol}")
 async def websocket_prices(
     websocket: WebSocket,

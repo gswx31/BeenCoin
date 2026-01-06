@@ -14,13 +14,12 @@ from app.services.futures_service import check_liquidations, update_positions_pn
 
 logger = logging.getLogger(__name__)
 
-
 async def run_futures_tasks():
     """
     선물 거래 백그라운드 작업
 
     5초마다:
-    - 청산 체크 (긴급)
+    - 청산 체크 (중요!)
     - 미실현 손익 업데이트
     """
 
@@ -43,7 +42,6 @@ async def run_futures_tasks():
         except Exception as e:
             logger.error(f"❌ 선물 백그라운드 작업 오류: {e}")
             await asyncio.sleep(5)
-
 
 def start_futures_tasks():
     """선물 백그라운드 작업 시작"""

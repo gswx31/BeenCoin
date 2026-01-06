@@ -31,11 +31,9 @@ from app.utils.security import get_current_user
 router = APIRouter(prefix="/futures/portfolio", tags=["futures-portfolio"])
 logger = logging.getLogger(__name__)
 
-
 # =====================================================
 # Response Schemas
 # =====================================================
-
 
 class FuturesPortfolioSummary(BaseModel):
     """선물 포트폴리오 요약"""
@@ -57,7 +55,6 @@ class FuturesPortfolioSummary(BaseModel):
     win_rate: float  # 승률 (%)
     total_trades: int  # 총 거래 횟수
     avg_roe: float  # 평균 수익률 (%)
-
 
 class PositionDetail(BaseModel):
     """포지션 상세"""
@@ -89,14 +86,12 @@ class PositionDetail(BaseModel):
     # 체결 내역 (분할 체결)
     fill_details: list[dict] | None = None
 
-
 class FillDetail(BaseModel):
     """체결 내역 상세"""
 
     price: float
     quantity: float
     timestamp: str
-
 
 class TransactionDetail(BaseModel):
     """거래 내역"""
@@ -117,11 +112,9 @@ class TransactionDetail(BaseModel):
     fill_count: int = 1  # 체결 건수
     fills: list[FillDetail] | None = None
 
-
 # =====================================================
 # 1. 포트폴리오 요약
 # =====================================================
-
 
 @router.get("/summary", response_model=FuturesPortfolioSummary)
 async def get_portfolio_summary(
@@ -216,11 +209,9 @@ async def get_portfolio_summary(
         logger.error(f"❌ 포트폴리오 요약 조회 실패: {e}")
         raise
 
-
 # =====================================================
 # 2. 포지션 목록 (상태별)
 # =====================================================
-
 
 @router.get("/fills/{position_id}", response_model=list[FillDetail])
 async def get_position_fills(
@@ -266,11 +257,9 @@ async def get_position_fills(
         for fill in fills
     ]
 
-
 # =====================================================
 # 3. 체결 내역 (분할 체결 포함)
 # =====================================================
-
 
 # @router.get("/fills/{position_id}", response_model=list[FillDetail])
 # async def get_position_fills(
@@ -321,11 +310,9 @@ async def get_position_fills(
 #         logger.error(f"❌ 체결 내역 조회 실패: {e}")
 #         raise
 
-
 # =====================================================
 # 4. 거래 내역 (전체)
 # =====================================================
-
 
 @router.get("/transactions", response_model=list[TransactionDetail])
 async def get_transactions(
@@ -405,11 +392,9 @@ async def get_transactions(
         logger.error(f"❌ 거래 내역 조회 실패: {e}")
         raise
 
-
 # =====================================================
 # 5. 거래 통계
 # =====================================================
-
 
 @router.get("/stats")
 async def get_trading_stats(

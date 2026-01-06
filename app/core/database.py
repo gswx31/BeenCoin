@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 # 데이터베이스 엔진
 engine = create_engine(settings.DATABASE_URL, echo=False, connect_args={"check_same_thread": False})
 
-
 def create_db_and_tables():
     """
     데이터베이스 및 테이블 생성
@@ -31,7 +30,6 @@ def create_db_and_tables():
     logger.info("✅ 데이터베이스 초기화 완료!")
     logger.info("  - 현물 거래 테이블 생성 완료")
     logger.info("  - 선물 거래 테이블 생성 완료")
-
 
 def get_session():
     """데이터베이스 세션 의존성"""

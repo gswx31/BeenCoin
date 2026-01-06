@@ -18,7 +18,6 @@ LOG_DIR.mkdir(exist_ok=True)
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-
 def setup_logger(name: str) -> logging.Logger:
     """
     애플리케이션 로거 설정
@@ -67,7 +66,6 @@ def setup_logger(name: str) -> logging.Logger:
     logger.addHandler(error_handler)
 
     return logger
-
 
 # 기본 로거 (import하여 바로 사용 가능)
 logger = setup_logger("beencoin")

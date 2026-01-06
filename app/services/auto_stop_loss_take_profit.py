@@ -14,7 +14,6 @@ from app.models.database import Order, OrderSide, OrderStatus, OrderType, Positi
 
 logger = logging.getLogger(__name__)
 
-
 async def auto_create_stop_loss_take_profit(
     session: Session,
     filled_order: Order,
@@ -138,7 +137,6 @@ async def auto_create_stop_loss_take_profit(
         session.rollback()
         logger.error(f"❌ 자동 손절/익절 설정 실패: {e}")
 
-
 async def cancel_opposite_order(session: Session, filled_order: Order):
     """
     OCO (One-Cancels-the-Other) 로직
@@ -210,7 +208,6 @@ async def cancel_opposite_order(session: Session, filled_order: Order):
     except Exception as e:
         session.rollback()
         logger.error(f"❌ OCO 처리 실패: {e}")
-
 
 async def check_and_create_missing_stop_loss_take_profit(session: Session, user_id: str):
     """
@@ -293,7 +290,6 @@ async def check_and_create_missing_stop_loss_take_profit(session: Session, user_
 
     except Exception as e:
         logger.error(f"❌ 누락된 손절/익절 생성 실패: {e}")
-
 
 async def get_related_orders(session: Session, order: Order) -> dict:
     """

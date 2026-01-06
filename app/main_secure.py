@@ -30,7 +30,6 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # 설정 로드 (보안 설정 우선)
 # =============================================================================
@@ -47,32 +46,29 @@ except ValueError as e:
     logger.error(f"❌ 설정 검증 실패: {e}")
     raise
 
-
 # =============================================================================
 # 데이터베이스 초기화
 # =============================================================================
 
 from app.core.database import create_db_and_tables
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """애플리케이션 라이프사이클"""
     logger.info("🚀 애플리케이션 시작...")
-    
+
     # 데이터베이스 초기화
     create_db_and_tables()
-    
+
     # 백그라운드 작업 시작 (선택적)
     # await start_background_tasks()
-    
+
     logger.info("✅ 초기화 완료")
-    
+
     yield
-    
+
     # 종료 시 정리
     logger.info("👋 애플리케이션 종료...")
-
 
 # =============================================================================
 # FastAPI 앱 생성
@@ -87,7 +83,6 @@ app = FastAPI(
     redoc_url="/redoc" if getattr(settings, "DEBUG", False) or getattr(settings, "ENVIRONMENT", "development") != "production" else None,
 )
 
-
 # =============================================================================
 # 미들웨어: 요청 ID 추가
 # =============================================================================
@@ -101,12 +96,11 @@ async def add_request_id(request: Request, call_next: Callable):
     """
     request_id = secrets.token_hex(8)
     request.state.request_id = request_id
-    
+
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
-    
-    return response
 
+    return response
 
 # =============================================================================
 # 미들웨어: 요청 로깅
@@ -116,22 +110,22 @@ async def add_request_id(request: Request, call_next: Callable):
 async def log_requests(request: Request, call_next: Callable):
     """요청/응답 로깅"""
     start_time = time.time()
-    
+
     # 클라이언트 IP
     forwarded = request.headers.get("X-Forwarded-For")
     client_ip = forwarded.split(",")[0].strip() if forwarded else (
         request.client.host if request.client else "unknown"
     )
-    
+
     # 민감한 경로 로깅 제외
     sensitive_paths = ["/api/v1/auth/login", "/api/v1/auth/register"]
     should_log_body = request.url.path not in sensitive_paths
-    
+
     response = await call_next(request)
-    
+
     # 처리 시간
     process_time = (time.time() - start_time) * 1000
-    
+
     # 로그 레벨 결정
     if response.status_code >= 500:
         log_level = logging.ERROR
@@ -139,7 +133,7 @@ async def log_requests(request: Request, call_next: Callable):
         log_level = logging.WARNING
     else:
         log_level = logging.INFO
-    
+
     logger.log(
         log_level,
         f"{request.method} {request.url.path} "
@@ -147,12 +141,11 @@ async def log_requests(request: Request, call_next: Callable):
         f"| Status: {response.status_code} "
         f"| Time: {process_time:.2f}ms"
     )
-    
+
     # 처리 시간 헤더 추가
     response.headers["X-Process-Time"] = f"{process_time:.2f}ms"
-    
-    return response
 
+    return response
 
 # =============================================================================
 # 미들웨어: 보안 헤더
@@ -162,7 +155,7 @@ async def log_requests(request: Request, call_next: Callable):
 async def add_security_headers(request: Request, call_next: Callable):
     """보안 헤더 추가"""
     response = await call_next(request)
-    
+
     # 기본 보안 헤더
     security_headers = {
         "X-Content-Type-Options": "nosniff",
@@ -172,21 +165,20 @@ async def add_security_headers(request: Request, call_next: Callable):
         "Cache-Control": "no-store, no-cache, must-revalidate",
         "Pragma": "no-cache",
     }
-    
+
     # 프로덕션 환경에서 추가 헤더
     if getattr(settings, "ENVIRONMENT", "development") == "production":
         security_headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         security_headers["Content-Security-Policy"] = "default-src 'self'"
-    
+
     # 사용자 정의 헤더 추가
     custom_headers = getattr(settings, "SECURITY_HEADERS", {})
     security_headers.update(custom_headers)
-    
+
     for header, value in security_headers.items():
         response.headers[header] = value
-    
-    return response
 
+    return response
 
 # =============================================================================
 # 미들웨어: Rate Limiting
@@ -194,13 +186,12 @@ async def add_security_headers(request: Request, call_next: Callable):
 
 try:
     from app.utils.rate_limiter import rate_limit_middleware
-    
+
     if getattr(settings, "RATE_LIMIT_ENABLED", True):
         app.middleware("http")(rate_limit_middleware)
         logger.info("✅ Rate Limiting 활성화")
 except ImportError:
     logger.warning("⚠️ Rate Limiter 모듈 없음")
-
 
 # =============================================================================
 # CORS 설정
@@ -217,7 +208,6 @@ app.add_middleware(
     expose_headers=["X-Request-ID", "X-Process-Time", "X-RateLimit-Remaining"],
 )
 
-
 # =============================================================================
 # 전역 예외 처리
 # =============================================================================
@@ -226,13 +216,13 @@ app.add_middleware(
 async def global_exception_handler(request: Request, exc: Exception):
     """전역 예외 처리"""
     request_id = getattr(request.state, "request_id", "unknown")
-    
+
     # 민감한 정보 로깅 방지
     logger.error(
         f"❌ Unhandled exception | Request ID: {request_id} | "
         f"Path: {request.url.path} | Error: {type(exc).__name__}"
     )
-    
+
     # 프로덕션에서는 상세 에러 숨김
     if getattr(settings, "ENVIRONMENT", "development") == "production":
         return JSONResponse(
@@ -252,7 +242,6 @@ async def global_exception_handler(request: Request, exc: Exception):
             }
         )
 
-
 # =============================================================================
 # 헬스체크
 # =============================================================================
@@ -261,7 +250,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def health_check():
     """
     헬스체크 엔드포인트
-    
+
     - 로드밸런서, 모니터링 시스템에서 사용
     - Rate Limit 제외
     """
@@ -271,7 +260,6 @@ async def health_check():
         "environment": getattr(settings, "ENVIRONMENT", "development")
     }
 
-
 @app.get("/", tags=["root"])
 async def root():
     """루트 엔드포인트"""
@@ -280,7 +268,6 @@ async def root():
         "docs": "/docs",
         "health": "/health"
     }
-
 
 # =============================================================================
 # 라우터 등록
@@ -321,14 +308,13 @@ try:
 except ImportError:
     logger.debug("Alerts 라우터 없음 (선택적)")
 
-
 # =============================================================================
 # 개발 서버 실행
 # =============================================================================
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "app.main_secure:app",
         host=getattr(settings, "API_HOST", "0.0.0.0"),

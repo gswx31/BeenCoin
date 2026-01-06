@@ -13,13 +13,11 @@ from sqlmodel import Field, Relationship, SQLModel
 # Enums
 # =====================================================
 
-
 class FuturesPositionSide(str, Enum):
     """선물 포지션 방향"""
 
     LONG = "LONG"  # 롱 (매수 포지션)
     SHORT = "SHORT"  # 숏 (매도 포지션)
-
 
 class FuturesOrderType(str, Enum):
     """선물 주문 타입"""
@@ -29,7 +27,6 @@ class FuturesOrderType(str, Enum):
     STOP_LOSS = "STOP_LOSS"  # 손절 (로스컷)
     TAKE_PROFIT = "TAKE_PROFIT"  # 익절 (베네핏컷)
 
-
 class FuturesPositionStatus(str, Enum):
     """선물 포지션 상태"""
 
@@ -38,11 +35,9 @@ class FuturesPositionStatus(str, Enum):
     CLOSED = "CLOSED"
     LIQUIDATED = "LIQUIDATED"
 
-
 # =====================================================
 # 선물 계정 모델
 # =====================================================
-
 
 class FuturesAccount(SQLModel, table=True):
     """선물 거래 계정 (현물 계정과 분리)"""
@@ -102,11 +97,9 @@ class FuturesAccount(SQLModel, table=True):
             return Decimal("0")
         return (self.margin_used / self.total_balance) * 100
 
-
 # =====================================================
 # 선물 포지션 모델
 # =====================================================
-
 
 class FuturesPosition(SQLModel, table=True):
     """선물 포지션"""
@@ -181,12 +174,12 @@ class FuturesPosition(SQLModel, table=True):
 
     @property
     def position_value(self) -> Decimal:
-        """포지션 가치 = 진입가 * 수량"""
+        """포지션 가치 = 진입가 × 수량"""
         return self.entry_price * self.quantity
 
     @property
     def roe_percent(self) -> Decimal:
-        """수익률 (ROE %) = (미실현 손익 / 증거금) * 100"""
+        """수익률 (ROE %) = (미실현 손익 / 증거금) × 100"""
         if self.margin <= 0:
             return Decimal("0")
         return (self.unrealized_pnl / self.margin) * 100
@@ -195,8 +188,8 @@ class FuturesPosition(SQLModel, table=True):
         """
         미실현 손익 계산
 
-        롱: (현재가 - 진입가) * 수량
-        숏: (진입가 - 현재가) * 수량
+        롱: (현재가 - 진입가) × 수량
+        숏: (진입가 - 현재가) × 수량
         """
         if self.side == FuturesPositionSide.LONG:
             return (current_price - self.entry_price) * self.quantity
@@ -207,8 +200,8 @@ class FuturesPosition(SQLModel, table=True):
         """
         청산 가격 계산
 
-        롱: 진입가 - (증거금 * 0.9 / 수량)
-        숏: 진입가 + (증거금 * 0.9 / 수량)
+        롱: 진입가 - (증거금 × 0.9 / 수량)
+        숏: 진입가 + (증거금 × 0.9 / 수량)
 
         청산 마진: 증거금의 90% (유지 증거금 10%)
         """
@@ -239,11 +232,9 @@ class FuturesPosition(SQLModel, table=True):
         else:  # SHORT
             return current_price <= self.take_profit_price
 
-
 # =====================================================
 # 선물 주문 모델
 # =====================================================
-
 
 class FuturesOrder(SQLModel, table=True):
     """선물 주문"""
@@ -277,11 +268,9 @@ class FuturesOrder(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     filled_at: datetime | None = None
 
-
 # =====================================================
 # 선물 거래 내역 모델
 # =====================================================
-
 
 class FuturesTransaction(SQLModel, table=True):
     """선물 거래 내역"""

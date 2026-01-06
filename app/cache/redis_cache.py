@@ -13,7 +13,6 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-
 class RedisCache:
     """Redis 캐시 관리 클래스"""
 
@@ -141,7 +140,6 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Redis STATS 오류: {e}")
             return {"status": "error", "error": str(e)}
-
 
 # 싱글톤 인스턴스
 redis_cache = RedisCache()

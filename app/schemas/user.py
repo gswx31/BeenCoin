@@ -2,10 +2,8 @@
 
 from pydantic import BaseModel, field_validator
 
-
 class UserBase(BaseModel):
     username: str
-
 
 class UserCreate(UserBase):
     password: str
@@ -30,10 +28,8 @@ class UserCreate(UserBase):
             raise ValueError("비밀번호는 50자 이하여야 합니다.")
         return v
 
-
 class UserLogin(UserBase):
     password: str
-
 
 class UserOut(UserBase):
     id: str  # UUID

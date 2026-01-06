@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
 # =============================================================================
 # 회원가입
 # =============================================================================
@@ -30,7 +29,7 @@ def register(user: UserCreate, session: Session = Depends(get_session)):
 
         if existing_user:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="이미 존재하는 사용자입니다."
             )
 
@@ -50,8 +49,8 @@ def register(user: UserCreate, session: Session = Depends(get_session)):
         logger.info(f"✅ 회원가입 성공: {user.username}")
 
         return UserOut(
-            id=db_user.id, 
-            username=db_user.username, 
+            id=db_user.id,
+            username=db_user.username,
             created_at=str(db_user.created_at)
         )
 
@@ -65,7 +64,6 @@ def register(user: UserCreate, session: Session = Depends(get_session)):
             detail="회원가입 중 오류가 발생했습니다.",
         )
 
-
 # =============================================================================
 # ⭐ 아이디 중복 검사 (NEW)
 # =============================================================================
@@ -73,26 +71,25 @@ def register(user: UserCreate, session: Session = Depends(get_session)):
 def check_username(username: str, session: Session = Depends(get_session)):
     """
     아이디 중복 검사
-    
+
     - 사용 가능하면 {"available": true}
     - 중복이면 {"available": false}
     """
     existing_user = session.exec(
         select(User).where(User.username == username)
     ).first()
-    
+
     return {
         "username": username,
         "available": existing_user is None
     }
-
 
 # =============================================================================
 # 로그인
 # =============================================================================
 @router.post("/login")
 def login(
-    form_data: OAuth2PasswordRequestForm = Depends(), 
+    form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session)
 ):
     """로그인"""
@@ -122,7 +119,7 @@ def login(
         if not db_user.is_active:
             logger.warning(f"❌ 비활성화된 계정: {form_data.username}")
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, 
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail="비활성화된 계정입니다."
             )
 
@@ -131,7 +128,7 @@ def login(
         logger.info(f"✅ 로그인 성공: {form_data.username}")
 
         return {
-            "access_token": access_token, 
+            "access_token": access_token,
             "token_type": "bearer",
             "username": db_user.username  # ⭐ 프론트엔드용 추가
         }
@@ -145,7 +142,6 @@ def login(
             detail="로그인 중 오류가 발생했습니다.",
         )
 
-
 # =============================================================================
 # ⭐ 현재 사용자 정보 조회 (NEW - 필수!)
 # =============================================================================
@@ -153,7 +149,7 @@ def login(
 def get_me(current_user: User = Depends(get_current_user)):
     """
     현재 로그인한 사용자 정보 조회
-    
+
     - 토큰 유효성 검증
     - 새로고침 시 로그인 상태 유지에 사용
     """

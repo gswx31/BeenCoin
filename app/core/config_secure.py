@@ -18,7 +18,6 @@ except ImportError:
 
 load_dotenv()
 
-
 def generate_secret_key() -> str:
     """
     암호학적으로 안전한 시크릿 키 생성
@@ -26,18 +25,17 @@ def generate_secret_key() -> str:
     """
     return secrets.token_urlsafe(64)
 
-
 class SecureSettings(BaseSettings):
     """
     보안 강화된 설정 클래스
     """
-    
+
     # ===========================================
     # 환경 설정
     # ===========================================
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
-    
+
     # ===========================================
     # API 설정
     # ===========================================
@@ -46,7 +44,7 @@ class SecureSettings(BaseSettings):
     VERSION: str = "2.1.0"
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
-    
+
     # ===========================================
     # 데이터베이스 설정
     # ===========================================
@@ -56,14 +54,14 @@ class SecureSettings(BaseSettings):
     DB_MAX_OVERFLOW: int = 10
     DB_POOL_PRE_PING: bool = True
     DB_POOL_TIMEOUT: int = 30
-    
+
     # ===========================================
     # 🔐 JWT 보안 설정 (강화됨)
     # ===========================================
     # SECRET_KEY는 환경변수에서 가져오거나 자동 생성
     # 프로덕션에서는 반드시 환경변수로 설정해야 함
     _secret_key: str | None = None
-    
+
     @property
     def SECRET_KEY(self) -> str:
         """
@@ -73,9 +71,9 @@ class SecureSettings(BaseSettings):
         """
         if self._secret_key:
             return self._secret_key
-            
+
         env_secret = os.getenv("SECRET_KEY")
-        
+
         if self.ENVIRONMENT == "production":
             if not env_secret:
                 raise ValueError(
@@ -99,11 +97,11 @@ class SecureSettings(BaseSettings):
                     "   서버 재시작 시 모든 JWT 토큰이 무효화됩니다.\n"
                     "   프로덕션에서는 반드시 환경변수로 설정하세요!"
                 )
-        
+
         return self._secret_key
-    
+
     ALGORITHM: str = "HS256"
-    
+
     # 토큰 만료 시간 (보안 강화: 기본값 축소)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
         os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")  # 1시간 (기존 24시간에서 축소)
@@ -111,18 +109,18 @@ class SecureSettings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(
         os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7")  # 7일
     )
-    
+
     # ===========================================
     # 🔐 Rate Limiting 설정
     # ===========================================
     RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
-    
+
     # 엔드포인트별 제한 (요청 수/시간)
     RATE_LIMIT_LOGIN: str = os.getenv("RATE_LIMIT_LOGIN", "5/minute")
     RATE_LIMIT_REGISTER: str = os.getenv("RATE_LIMIT_REGISTER", "3/minute")
     RATE_LIMIT_API: str = os.getenv("RATE_LIMIT_API", "100/minute")
     RATE_LIMIT_TRADING: str = os.getenv("RATE_LIMIT_TRADING", "30/minute")
-    
+
     # ===========================================
     # 🔐 CORS 설정 (보안 강화)
     # ===========================================
@@ -144,11 +142,11 @@ class SecureSettings(BaseSettings):
             default = "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000"
             origins = os.getenv("CORS_ORIGINS", default)
             return [o.strip() for o in origins.split(",")]
-    
+
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     CORS_ALLOW_HEADERS: List[str] = ["Authorization", "Content-Type", "X-Request-ID"]
-    
+
     # ===========================================
     # 🔐 보안 헤더 설정
     # ===========================================
@@ -160,7 +158,7 @@ class SecureSettings(BaseSettings):
         "Content-Security-Policy": "default-src 'self'",
         "Referrer-Policy": "strict-origin-when-cross-origin",
     }
-    
+
     # ===========================================
     # Binance API
     # ===========================================
@@ -168,12 +166,12 @@ class SecureSettings(BaseSettings):
     BINANCE_API_KEY: str | None = os.getenv("BINANCE_API_KEY")
     BINANCE_API_SECRET: str | None = os.getenv("BINANCE_API_SECRET")
     BINANCE_TIMEOUT: int = 10
-    
+
     # ===========================================
     # 거래 설정
     # ===========================================
     INITIAL_BALANCE: float = float(os.getenv("INITIAL_BALANCE", "1000000"))
-    
+
     @property
     def SUPPORTED_SYMBOLS(self) -> List[str]:
         symbols_str = os.getenv(
@@ -181,41 +179,40 @@ class SecureSettings(BaseSettings):
             "BTCUSDT,ETHUSDT,BNBUSDT,ADAUSDT,XRPUSDT,SOLUSDT,DOGEUSDT"
         )
         return [s.strip() for s in symbols_str.split(",")]
-    
+
     # 레버리지 설정
     MAX_LEVERAGE: int = int(os.getenv("MAX_LEVERAGE", "125"))
-    
+
     # 손절/익절 기본 비율
     DEFAULT_STOP_LOSS_PERCENT: float = 3.0
     DEFAULT_TAKE_PROFIT_PERCENT: float = 6.0
     AUTO_STOP_LOSS_ENABLED: bool = True
     AUTO_TAKE_PROFIT_ENABLED: bool = True
     OCO_ENABLED: bool = True
-    
+
     # ===========================================
     # 로깅
     # ===========================================
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_SENSITIVE_DATA: bool = False  # 민감 데이터 로깅 비활성화
-    
+
     # ===========================================
     # HTTP 설정
     # ===========================================
     HTTP_TIMEOUT: int = 30
-    
+
     # ===========================================
     # 캐시 설정
     # ===========================================
     CACHE_TTL: int = 5
     CACHE_ENABLED: bool = True
-    
+
     # Pydantic 설정
     model_config = SettingsConfigDict(
         case_sensitive=True,
         env_file=".env",
         extra="allow"
     )
-
 
 # 싱글톤 설정 인스턴스
 settings = SecureSettings()
@@ -224,21 +221,21 @@ settings = SecureSettings()
 def validate_settings():
     """설정 유효성 검증"""
     errors = []
-    
+
     # SECRET_KEY 검증 (프로퍼티 접근 시 자동 검증됨)
     try:
         _ = settings.SECRET_KEY
     except ValueError as e:
         errors.append(str(e))
-    
+
     # 프로덕션 환경 추가 검증
     if settings.ENVIRONMENT == "production":
         if settings.DEBUG:
             errors.append("🚨 프로덕션 환경에서 DEBUG=true는 위험합니다!")
-        
+
         if "localhost" in str(settings.CORS_ORIGINS):
             print("⚠️  경고: 프로덕션 CORS에 localhost가 포함되어 있습니다.")
-    
+
     if errors:
         raise ValueError("\n".join(errors))
 

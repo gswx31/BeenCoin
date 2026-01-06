@@ -25,11 +25,9 @@ from app.utils.security import get_current_user
 router = APIRouter(prefix="/futures", tags=["futures"])
 logger = logging.getLogger(__name__)
 
-
 # =====================================================
 # Schemas
 # =====================================================
-
 
 class FuturesPositionOpen(BaseModel):
     """선물 포지션 개설 요청"""
@@ -52,7 +50,6 @@ class FuturesPositionOpen(BaseModel):
             }
         }
 
-
 class FuturesAccountOut(BaseModel):
     """선물 계정 응답"""
 
@@ -69,7 +66,6 @@ class FuturesAccountOut(BaseModel):
     class Config:
         from_attributes = True
         json_encoders = {Decimal: lambda v: float(v)}  # Decimal을 float로 변환
-
 
 class FuturesPositionOut(BaseModel):
     """선물 포지션 응답"""
@@ -95,11 +91,9 @@ class FuturesPositionOut(BaseModel):
         from_attributes = True
         json_encoders = {Decimal: lambda v: float(v)}
 
-
 # =====================================================
 # API Endpoints
 # =====================================================
-
 
 @router.get("/account", response_model=FuturesAccountOut)
 async def get_futures_account(
@@ -145,7 +139,6 @@ async def get_futures_account(
         available_balance=float(account.available_balance),
         margin_ratio=float(account.margin_ratio),
     )
-
 
 @router.post("/positions/open", response_model=FuturesPositionOut)
 async def open_position(
@@ -207,7 +200,6 @@ async def open_position(
         closed_at=position.closed_at.isoformat() if position.closed_at else None,
     )
 
-
 @router.post("/positions/{position_id}/close")
 async def close_position(
     position_id: str,  # ✅ UUID
@@ -227,7 +219,6 @@ async def close_position(
     )
 
     return result
-
 
 @router.get("/positions", response_model=list[FuturesPositionOut])
 async def get_positions(
@@ -270,7 +261,6 @@ async def get_positions(
 
     return result
 
-
 @router.get("/transactions", response_model=list[dict])
 async def get_transactions(
     limit: int = Query(50, ge=1, le=200),
@@ -305,7 +295,6 @@ async def get_transactions(
         }
         for tx in transactions
     ]
-
 
 @router.get("/stats")
 async def get_futures_stats(

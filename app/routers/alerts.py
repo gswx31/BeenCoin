@@ -17,9 +17,7 @@ from app.utils.security import get_current_user
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 logger = logging.getLogger(__name__)
 
-
 # ===== Schemas =====
-
 
 class AlertCreate(BaseModel):
     """알림 생성 요청"""
@@ -32,7 +30,6 @@ class AlertCreate(BaseModel):
         json_schema_extra = {
             "example": {"symbol": "BTCUSDT", "target_price": "50000", "condition": "ABOVE"}
         }
-
 
 class AlertOut(BaseModel):
     """알림 응답"""
@@ -50,9 +47,7 @@ class AlertOut(BaseModel):
     class Config:
         from_attributes = True
 
-
 # ===== API Endpoints =====
-
 
 @router.post("/", response_model=AlertOut, status_code=201)
 async def create_alert(
@@ -92,7 +87,6 @@ async def create_alert(
 
     return alert
 
-
 @router.get("/", response_model=list[AlertOut])
 async def get_alerts(
     active_only: bool = True,
@@ -109,7 +103,6 @@ async def get_alerts(
     alerts = session.exec(query.order_by(PriceAlert.created_at.desc())).all()
 
     return list(alerts)
-
 
 @router.delete("/{alert_id}")
 async def delete_alert(
@@ -133,7 +126,6 @@ async def delete_alert(
     logger.info(f"🗑️ 알림 삭제: ID={alert_id}")
 
     return {"message": "알림이 삭제되었습니다"}
-
 
 async def check_price_alerts(session: Session):
     """

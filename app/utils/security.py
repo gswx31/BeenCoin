@@ -18,14 +18,12 @@ pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 # HTTP Bearer 토큰 스킴
 security = HTTPBearer()
 
-
 def hash_password(password: str) -> str:
     """
     비밀번호 해싱
     Argon2 사용: 입력 길이 제한 없음 (보안상 validator에서 char 제한 추천)
     """
     return pwd_context.hash(password)
-
 
 # ⭐ 별칭 함수 추가 (하위 호환성)
 def get_password_hash(password: str) -> str:
@@ -35,11 +33,9 @@ def get_password_hash(password: str) -> str:
     """
     return hash_password(password)
 
-
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """비밀번호 검증"""
     return pwd_context.verify(plain_password, hashed_password)
-
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """
@@ -70,7 +66,6 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
-
 def decode_access_token(token: str) -> dict:
     """
     JWT 토큰 디코딩 및 검증
@@ -99,7 +94,6 @@ def decode_access_token(token: str) -> dict:
             detail="유효하지 않은 토큰입니다.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -141,7 +135,6 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="비활성화된 계정입니다.")
 
     return user
-
 
 def create_refresh_token(data: dict) -> str:
     """

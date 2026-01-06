@@ -13,7 +13,6 @@ from starlette.responses import Response
 
 from app.cache.redis_cache import redis_cache
 
-
 class HTTPCacheMiddleware(BaseHTTPMiddleware):
     """
     GET 요청 응답 캐싱

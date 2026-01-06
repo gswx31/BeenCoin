@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 # 수수료율
 FEE_RATE = Decimal("0.0004")  # 0.04%
 
-
 # =====================================================
 # 선물 계정 관리
 # =====================================================
@@ -63,7 +62,6 @@ def get_or_create_futures_account(session: Session, user_id: str) -> FuturesAcco
 
     return account
 
-
 # =====================================================
 # ⭐ 최대 주문 가능 수량 계산 (수수료 포함)
 # =====================================================
@@ -75,39 +73,39 @@ def calculate_max_quantity(
 ) -> dict:
     """
     최대 주문 가능 수량 계산 (수수료 포함)
-    
+
     100% 주문 시 수수료를 먼저 차감하고 계산
-    
+
     공식:
     - 포지션 가치 = 수량 × 가격 × 레버리지
     - 필요 증거금 = 포지션 가치 / 레버리지 = 수량 × 가격
     - 수수료 = 포지션 가치 × 0.0004 = 수량 × 가격 × 레버리지 × 0.0004
     - 총 필요 = 증거금 + 수수료 = 수량 × 가격 × (1 + 레버리지 × 0.0004)
-    
+
     따라서:
     - 최대 수량 = 잔액 / (가격 × (1 + 레버리지 × 0.0004))
     """
     if price <= 0 or leverage <= 0:
         return {"max_quantity": Decimal("0"), "max_margin": Decimal("0"), "fee": Decimal("0")}
-    
+
     # 수수료 승수 = 1 + (레버리지 × 수수료율)
     fee_multiplier = Decimal("1") + (Decimal(str(leverage)) * FEE_RATE)
-    
+
     # 최대 수량 (원래 입력 수량 기준, 레버리지 적용 전)
     max_quantity = available_balance / (price * fee_multiplier)
-    
+
     # 실제 포지션 크기 (레버리지 적용)
     actual_position_size = max_quantity * Decimal(str(leverage))
-    
+
     # 포지션 가치
     position_value = actual_position_size * price
-    
+
     # 필요 증거금
     max_margin = position_value / Decimal(str(leverage))
-    
+
     # 수수료
     fee = position_value * FEE_RATE
-    
+
     return {
         "max_quantity": max_quantity,
         "max_margin": max_margin,
@@ -115,7 +113,6 @@ def calculate_max_quantity(
         "position_value": position_value,
         "total_required": max_margin + fee,
     }
-
 
 # =====================================================
 # ⭐ 지정가 주문 - 유리한 가격 체결
@@ -130,16 +127,16 @@ async def execute_limit_order_with_better_price(
 ) -> dict:
     """
     지정가 주문 체결 - 유리한 가격에 체결
-    
+
     - 매수(LONG): 지정가 이하의 체결 가격 사용
     - 매도(SHORT): 지정가 이상의 체결 가격 사용
-    
+
     실제 거래소처럼 호가창/체결 내역에서 유리한 가격 찾기
     """
     try:
         # 최근 체결 내역 조회
         trades = await get_recent_trades(symbol, limit=100)
-        
+
         if not trades:
             # 체결 내역 없으면 지정가 그대로 사용
             return {
@@ -147,16 +144,16 @@ async def execute_limit_order_with_better_price(
                 "fill_price": limit_price,
                 "fills": [{"price": limit_price, "quantity": quantity, "timestamp": datetime.utcnow().isoformat()}],
             }
-        
+
         # 유리한 체결 찾기
         fills = []
         remaining_qty = quantity * Decimal(str(leverage))
         total_cost = Decimal("0")
-        
+
         for trade in trades:
             trade_price = Decimal(str(trade.get("price", trade.get("p", "0"))))
             trade_qty = Decimal(str(trade.get("qty", trade.get("q", "0"))))
-            
+
             # 가격 조건 확인
             if side == "BUY":
                 # 매수: 지정가 이하에서만 체결
@@ -166,7 +163,7 @@ async def execute_limit_order_with_better_price(
                 # 매도: 지정가 이상에서만 체결
                 if trade_price < limit_price:
                     continue
-            
+
             # 체결
             fill_qty = min(remaining_qty, trade_qty)
             fills.append({
@@ -174,13 +171,13 @@ async def execute_limit_order_with_better_price(
                 "quantity": float(fill_qty),
                 "timestamp": trade.get("time", datetime.utcnow().isoformat()),
             })
-            
+
             total_cost += trade_price * fill_qty
             remaining_qty -= fill_qty
-            
+
             if remaining_qty <= 0:
                 break
-        
+
         if not fills:
             # 유리한 가격 없음 → PENDING 상태로 대기
             return {
@@ -189,12 +186,12 @@ async def execute_limit_order_with_better_price(
                 "fills": [],
                 "message": "지정가 조건 미충족, 대기 주문으로 등록",
             }
-        
+
         if remaining_qty > 0:
             # 부분 체결
             filled_qty = (quantity * Decimal(str(leverage))) - remaining_qty
             avg_price = total_cost / filled_qty if filled_qty > 0 else limit_price
-            
+
             return {
                 "can_fill": True,
                 "partial": True,
@@ -203,11 +200,11 @@ async def execute_limit_order_with_better_price(
                 "remaining_quantity": remaining_qty,
                 "fills": fills,
             }
-        
+
         # 완전 체결
         filled_qty = quantity * Decimal(str(leverage))
         avg_price = total_cost / filled_qty
-        
+
         return {
             "can_fill": True,
             "partial": False,
@@ -215,7 +212,7 @@ async def execute_limit_order_with_better_price(
             "filled_quantity": filled_qty,
             "fills": fills,
         }
-        
+
     except Exception as e:
         logger.error(f"지정가 체결 확인 실패: {e}")
         # 오류 시 지정가 그대로 사용
@@ -224,7 +221,6 @@ async def execute_limit_order_with_better_price(
             "fill_price": limit_price,
             "fills": [{"price": float(limit_price), "quantity": float(quantity * leverage), "timestamp": datetime.utcnow().isoformat()}],
         }
-
 
 # =====================================================
 # 시장가 체결 (실제 체결 내역 기반)
@@ -238,12 +234,12 @@ async def execute_market_order_with_real_trades(
 ) -> dict:
     """
     시장가 주문 체결 - 실제 체결 내역 기반
-    
+
     바이낸스 최근 체결 내역을 사용하여 현실적인 체결 시뮬레이션
     """
     try:
         trades = await get_recent_trades(symbol, limit=100)
-        
+
         if not trades:
             current_price = await get_current_price(symbol)
             actual_qty = quantity * Decimal(str(leverage))
@@ -252,29 +248,29 @@ async def execute_market_order_with_real_trades(
                 "actual_position_size": actual_qty,
                 "fills": [{"price": float(current_price), "quantity": float(actual_qty), "timestamp": datetime.utcnow().isoformat()}],
             }
-        
+
         # 체결 시뮬레이션
         fills = []
         remaining_qty = quantity * Decimal(str(leverage))
         total_cost = Decimal("0")
-        
+
         for trade in trades:
             trade_price = Decimal(str(trade.get("price", trade.get("p", "0"))))
             trade_qty = Decimal(str(trade.get("qty", trade.get("q", "0"))))
-            
+
             fill_qty = min(remaining_qty, trade_qty)
             fills.append({
                 "price": float(trade_price),
                 "quantity": float(fill_qty),
                 "timestamp": trade.get("time", datetime.utcnow().isoformat()),
             })
-            
+
             total_cost += trade_price * fill_qty
             remaining_qty -= fill_qty
-            
+
             if remaining_qty <= 0:
                 break
-        
+
         # 남은 수량이 있으면 마지막 가격으로 채움
         if remaining_qty > 0 and trades:
             last_price = Decimal(str(trades[-1].get("price", trades[-1].get("p", "0"))))
@@ -284,16 +280,16 @@ async def execute_market_order_with_real_trades(
                 "timestamp": datetime.utcnow().isoformat(),
             })
             total_cost += last_price * remaining_qty
-        
+
         actual_qty = quantity * Decimal(str(leverage))
         avg_price = total_cost / actual_qty if actual_qty > 0 else Decimal("0")
-        
+
         return {
             "average_price": avg_price,
             "actual_position_size": actual_qty,
             "fills": fills,
         }
-        
+
     except Exception as e:
         logger.error(f"시장가 체결 실패: {e}")
         current_price = await get_current_price(symbol)
@@ -303,7 +299,6 @@ async def execute_market_order_with_real_trades(
             "actual_position_size": actual_qty,
             "fills": [{"price": float(current_price), "quantity": float(actual_qty), "timestamp": datetime.utcnow().isoformat()}],
         }
-
 
 # =====================================================
 # ⭐ 선물 포지션 개설 (수정판)
@@ -321,7 +316,7 @@ async def open_futures_position(
 ) -> FuturesPosition:
     """
     선물 포지션 개설 (수정판)
-    
+
     수정 사항:
     1. 100% 주문 시 수수료를 먼저 차감
     2. 지정가 주문은 유리한 가격에 체결
@@ -329,13 +324,13 @@ async def open_futures_position(
     try:
         # 1. 계정 조회/생성
         account = get_or_create_futures_account(session, user_id)
-        
+
         # 2. 시장가/지정가 처리
         entry_price = None
         actual_quantity = quantity * Decimal(str(leverage))
         fill_details = []
         position_status = FuturesPositionStatus.OPEN
-        
+
         if order_type == FuturesOrderType.MARKET:
             # 시장가: 즉시 체결
             result = await execute_market_order_with_real_trades(
@@ -347,13 +342,13 @@ async def open_futures_position(
             entry_price = result["average_price"]
             fill_details = result["fills"]
             actual_quantity = result["actual_position_size"]
-            
+
             logger.info(f"✅ 시장가 체결: {len(fill_details)}건, 평균가: {entry_price:.2f}")
-            
+
         elif order_type == FuturesOrderType.LIMIT:
             if price is None:
                 raise HTTPException(status_code=400, detail="지정가 주문은 price가 필요합니다")
-            
+
             # ⭐ 지정가: 유리한 가격 체결 시도
             result = await execute_limit_order_with_better_price(
                 symbol=symbol,
@@ -362,12 +357,12 @@ async def open_futures_position(
                 limit_price=price,
                 leverage=leverage,
             )
-            
+
             if result["can_fill"]:
                 # 즉시 체결 가능
                 entry_price = result["fill_price"]
                 fill_details = result.get("fills", [])
-                
+
                 if result.get("partial"):
                     # 부분 체결 → PENDING 상태
                     position_status = FuturesPositionStatus.PENDING
@@ -379,18 +374,18 @@ async def open_futures_position(
                 entry_price = price
                 position_status = FuturesPositionStatus.PENDING
                 logger.info(f"📝 지정가 대기: {quantity} @ ${price:.2f}")
-        
+
         # 3. ⭐ 증거금 및 수수료 계산 (수수료 선차감 방식)
         position_value = entry_price * actual_quantity
         required_margin = position_value / Decimal(str(leverage))
         fee = position_value * FEE_RATE
         total_required = required_margin + fee
-        
+
         # 4. ⭐ 잔액 확인 (수정: 수수료 포함 확인)
         if account.balance < total_required:
             # 수수료를 차감한 최대 가능 금액 계산
             max_info = calculate_max_quantity(account.balance, entry_price, leverage)
-            
+
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -400,15 +395,15 @@ async def open_futures_position(
                     f"최대 주문 가능: {max_info['max_quantity']:.6f} {symbol.replace('USDT', '')}"
                 ),
             )
-        
+
         # 5. 청산가 계산
         liquidation_margin = required_margin * Decimal("0.9")
-        
+
         if side == FuturesPositionSide.LONG:
             liquidation_price = entry_price - (liquidation_margin / actual_quantity)
         else:
             liquidation_price = entry_price + (liquidation_margin / actual_quantity)
-        
+
         # 6. 포지션 생성
         position = FuturesPosition(
             account_id=account.id,
@@ -426,17 +421,17 @@ async def open_futures_position(
             fee=fee,
             opened_at=datetime.utcnow(),
         )
-        
+
         # 7. 계정 업데이트
         account.balance -= total_required
         account.margin_used += required_margin
         account.updated_at = datetime.utcnow()
-        
+
         # 8. DB 저장
         session.add(position)
         session.add(account)
         session.flush()
-        
+
         # 9. 체결 내역 기록
         for fill in fill_details:
             fill_record = FuturesFill(
@@ -446,7 +441,7 @@ async def open_futures_position(
                 timestamp=datetime.fromisoformat(fill["timestamp"]) if isinstance(fill["timestamp"], str) else fill["timestamp"],
             )
             session.add(fill_record)
-        
+
         # 10. 거래 내역 기록
         transaction = FuturesTransaction(
             user_id=user_id,
@@ -461,12 +456,12 @@ async def open_futures_position(
             fee=fee,
             timestamp=datetime.utcnow(),
         )
-        
+
         session.add(transaction)
         session.commit()
         session.refresh(position)
         session.refresh(account)
-        
+
         logger.info(
             f"✅ 선물 포지션 {'개설' if position_status == FuturesPositionStatus.OPEN else '대기 등록'}:\n"
             f"   - ID: {position.id}\n"
@@ -478,9 +473,9 @@ async def open_futures_position(
             f"   - 청산가: ${liquidation_price:.2f}\n"
             f"   - 상태: {position_status.value}"
         )
-        
+
         return position
-        
+
     except HTTPException:
         session.rollback()
         raise
@@ -488,7 +483,6 @@ async def open_futures_position(
         session.rollback()
         logger.error(f"❌ 선물 포지션 개설 실패: {e}")
         raise HTTPException(status_code=500, detail=f"포지션 개설 실패: {str(e)}")
-
 
 # =====================================================
 # 선물 포지션 청산
@@ -498,32 +492,32 @@ async def close_futures_position(session: Session, user_id: str, position_id: st
     """선물 포지션 청산"""
     try:
         position = session.get(FuturesPosition, position_id)
-        
+
         if not position:
             raise HTTPException(status_code=404, detail="포지션을 찾을 수 없습니다")
-        
+
         if position.status not in [FuturesPositionStatus.OPEN, FuturesPositionStatus.PENDING]:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"청산할 수 없는 포지션 (상태: {position.status.value})"
             )
-        
+
         account = session.get(FuturesAccount, position.account_id)
         if account.user_id != user_id:
             raise HTTPException(status_code=403, detail="권한이 없습니다")
-        
+
         # PENDING 상태면 취소 처리
         if position.status == FuturesPositionStatus.PENDING:
             position.status = FuturesPositionStatus.CLOSED
             position.closed_at = datetime.utcnow()
             position.realized_pnl = Decimal("0")
-            
+
             # 증거금 + 수수료 반환
             refund = position.margin + position.fee
             account.balance += refund
             account.margin_used -= position.margin
             account.updated_at = datetime.utcnow()
-            
+
             transaction = FuturesTransaction(
                 user_id=user_id,
                 position_id=position.id,
@@ -537,40 +531,40 @@ async def close_futures_position(session: Session, user_id: str, position_id: st
                 fee=Decimal("0"),
                 timestamp=datetime.utcnow(),
             )
-            
+
             session.add_all([position, account, transaction])
             session.commit()
-            
+
             return {
                 "message": "대기 주문이 취소되었습니다",
                 "position_id": str(position.id),
                 "refunded": float(refund),
             }
-        
+
         # OPEN 상태: 청산 처리
         current_price = await get_current_price(position.symbol)
-        
+
         if position.side == FuturesPositionSide.LONG:
             pnl = (current_price - position.entry_price) * position.quantity
         else:
             pnl = (position.entry_price - current_price) * position.quantity
-        
+
         position_value = current_price * position.quantity
         exit_fee = position_value * FEE_RATE
         net_pnl = pnl - exit_fee
         roe = (net_pnl / position.margin) * 100 if position.margin > 0 else Decimal("0")
-        
+
         position.status = FuturesPositionStatus.CLOSED
         position.mark_price = current_price
         position.realized_pnl = net_pnl
         position.closed_at = datetime.utcnow()
-        
+
         account.balance += position.margin + net_pnl
         account.margin_used -= position.margin
         account.total_profit += net_pnl
         account.unrealized_pnl -= position.unrealized_pnl
         account.updated_at = datetime.utcnow()
-        
+
         transaction = FuturesTransaction(
             user_id=user_id,
             position_id=position.id,
@@ -584,10 +578,10 @@ async def close_futures_position(session: Session, user_id: str, position_id: st
             fee=exit_fee,
             timestamp=datetime.utcnow(),
         )
-        
+
         session.add_all([position, account, transaction])
         session.commit()
-        
+
         logger.info(
             f"✅ 포지션 청산:\n"
             f"   - ID: {position.id}\n"
@@ -596,7 +590,7 @@ async def close_futures_position(session: Session, user_id: str, position_id: st
             f"   - 청산가: ${current_price:.2f}\n"
             f"   - 손익: {net_pnl:+.2f} USDT ({roe:+.2f}%)"
         )
-        
+
         return {
             "message": "포지션이 청산되었습니다",
             "position_id": str(position.id),
@@ -606,7 +600,7 @@ async def close_futures_position(session: Session, user_id: str, position_id: st
             "roe_percent": float(roe),
             "fee": float(exit_fee),
         }
-        
+
     except HTTPException:
         session.rollback()
         raise
@@ -614,7 +608,6 @@ async def close_futures_position(session: Session, user_id: str, position_id: st
         session.rollback()
         logger.error(f"❌ 포지션 청산 실패: {e}")
         raise HTTPException(status_code=500, detail=f"청산 실패: {str(e)}")
-
 
 # =====================================================
 # 강제 청산
@@ -627,17 +620,17 @@ async def liquidate_position(session: Session, position: FuturesPosition):
         liquidation_price = position.liquidation_price
         loss = position.margin
         liquidation_fee = (liquidation_price * position.quantity) * Decimal("0.001")
-        
+
         position.status = FuturesPositionStatus.LIQUIDATED
         position.mark_price = liquidation_price
         position.realized_pnl = -loss
         position.closed_at = datetime.utcnow()
-        
+
         account.margin_used -= position.margin
         account.total_profit -= loss
         account.unrealized_pnl -= position.unrealized_pnl
         account.updated_at = datetime.utcnow()
-        
+
         transaction = FuturesTransaction(
             user_id=account.user_id,
             position_id=position.id,
@@ -651,10 +644,10 @@ async def liquidate_position(session: Session, position: FuturesPosition):
             fee=liquidation_fee,
             timestamp=datetime.utcnow(),
         )
-        
+
         session.add_all([position, account, transaction])
         session.commit()
-        
+
         logger.warning(
             f"⚠️ 강제 청산:\n"
             f"   - ID: {position.id}\n"
@@ -662,11 +655,10 @@ async def liquidate_position(session: Session, position: FuturesPosition):
             f"   - 청산가: ${liquidation_price:.2f}\n"
             f"   - 손실: -{loss:.2f} USDT"
         )
-        
+
     except Exception as e:
         session.rollback()
         logger.error(f"❌ 강제 청산 실패: {e}")
-
 
 # =====================================================
 # 청산 체크 (스케줄러용)
@@ -680,13 +672,13 @@ def get_futures_positions(
 ) -> list[FuturesPosition]:
     """
     선물 포지션 목록 조회
-    
+
     Args:
         session: DB 세션
         user_id: 사용자 ID
         status: 포지션 상태 (OPEN, CLOSED, PENDING, LIQUIDATED)
         symbol: 거래 심볼 (선택)
-    
+
     Returns:
         포지션 목록
     """
@@ -695,73 +687,68 @@ def get_futures_positions(
         account = session.exec(
             select(FuturesAccount).where(FuturesAccount.user_id == user_id)
         ).first()
-        
+
         if not account:
             return []
-        
+
         # 포지션 조회 쿼리 생성
         query = select(FuturesPosition).where(
             FuturesPosition.account_id == account.id
         )
-        
+
         # 상태 필터
         if status:
             query = query.where(FuturesPosition.status == status)
-        
+
         # 심볼 필터
         if symbol:
             query = query.where(FuturesPosition.symbol == symbol)
-        
+
         # 최신순 정렬
         query = query.order_by(FuturesPosition.opened_at.desc())
-        
+
         positions = session.exec(query).all()
-        
+
         logger.debug(
             f"포지션 조회: User={user_id}, Status={status}, "
             f"Symbol={symbol}, Count={len(positions)}"
         )
-        
+
         return positions
-        
+
     except Exception as e:
         logger.error(f"❌ 포지션 조회 실패: {e}")
         return []
-
-
 
 async def check_liquidations(session: Session):
     """청산 체크"""
     try:
         open_positions = session.exec(
-            select(FuturesPosition).where(
-                FuturesPosition.status == FuturesPositionStatus.OPEN
-            )
+            select(FuturesPosition).where(FuturesPosition.status == FuturesPositionStatus.OPEN)
         ).all()
-        
+
         for position in open_positions:
             try:
                 current_price = await get_current_price(position.symbol)
-                
+
                 should_liquidate = False
-                
+
                 if position.side == FuturesPositionSide.LONG:
                     if current_price <= position.liquidation_price:
                         should_liquidate = True
                 else:
                     if current_price >= position.liquidation_price:
                         should_liquidate = True
-                
+
                 if should_liquidate:
                     await liquidate_position(session, position)
-                    
+
             except Exception as e:
                 logger.error(f"포지션 {position.id} 청산 체크 실패: {e}")
                 continue
-                
+
     except Exception as e:
         logger.error(f"청산 체크 실패: {e}")
-
 
 # =====================================================
 # 미실현 손익 업데이트 (스케줄러용)
@@ -771,30 +758,28 @@ async def update_positions_pnl(session: Session):
     """미실현 손익 업데이트"""
     try:
         open_positions = session.exec(
-            select(FuturesPosition).where(
-                FuturesPosition.status == FuturesPositionStatus.OPEN
-            )
+            select(FuturesPosition).where(FuturesPosition.status == FuturesPositionStatus.OPEN)
         ).all()
-        
+
         for position in open_positions:
             try:
                 current_price = await get_current_price(position.symbol)
-                
+
                 if position.side == FuturesPositionSide.LONG:
                     pnl = (current_price - position.entry_price) * position.quantity
                 else:
                     pnl = (position.entry_price - current_price) * position.quantity
-                
+
                 position.mark_price = current_price
                 position.unrealized_pnl = pnl
                 session.add(position)
-                
+
             except Exception as e:
                 logger.error(f"포지션 {position.id} PnL 업데이트 실패: {e}")
                 continue
-        
+
         session.commit()
-        
+
     except Exception as e:
         logger.error(f"PnL 업데이트 실패: {e}")
         session.rollback()

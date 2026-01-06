@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 # .env 파일 로드
 load_dotenv()
 
-
 class Settings(BaseSettings):
     # API 설정
     API_V1_STR: str = "/api/v1"
@@ -87,7 +86,6 @@ class Settings(BaseSettings):
 
     # OCO (One-Cancels-the-Other) 활성화
     OCO_ENABLED: bool = True
-
 
 # 설정 인스턴스 생성
 settings = Settings()

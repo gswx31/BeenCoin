@@ -29,11 +29,9 @@ from app.services.futures_service import liquidate_position
 
 logger = logging.getLogger(__name__)
 
-
 # =====================================================
 # 1. 선물 지정가 주문 실시간 부분 체결
 # =====================================================
-
 
 async def check_pending_futures_limit_orders(session: Session):
     """
@@ -180,11 +178,9 @@ async def check_pending_futures_limit_orders(session: Session):
         logger.error(f"❌ 지정가 주문 체결 확인 실패: {e}")
         session.rollback()
 
-
 # =====================================================
 # 2. 강제 청산 자동 감지
 # =====================================================
-
 
 async def check_liquidation(session: Session):
     """
@@ -236,11 +232,9 @@ async def check_liquidation(session: Session):
     except Exception as e:
         logger.error(f"❌ 강제 청산 확인 실패: {e}")
 
-
 # =====================================================
 # 3. 미실현 손익 실시간 업데이트
 # =====================================================
-
 
 async def update_unrealized_pnl(session: Session):
     """
@@ -281,11 +275,9 @@ async def update_unrealized_pnl(session: Session):
         logger.error(f"❌ 미실현 손익 업데이트 실패: {e}")
         session.rollback()
 
-
 # =====================================================
 # 4. 계정 미실현 손익 합계 업데이트
 # =====================================================
-
 
 async def update_account_unrealized_pnl(session: Session):
     """
@@ -316,11 +308,9 @@ async def update_account_unrealized_pnl(session: Session):
         logger.error(f"❌ 계정 PnL 업데이트 실패: {e}")
         session.rollback()
 
-
 # =====================================================
 # 5. 백그라운드 작업 실행
 # =====================================================
-
 
 async def run_futures_background_tasks():
     """
@@ -360,7 +350,6 @@ async def run_futures_background_tasks():
             logger.error(f"❌ 백그라운드 작업 오류: {e}")
             await asyncio.sleep(5)
 
-
 def start_futures_background_tasks():
     """백그라운드 작업 시작 (FastAPI 시작 시 호출)"""
     asyncio.create_task(run_futures_background_tasks())
@@ -372,11 +361,9 @@ def start_futures_background_tasks():
     logger.info("   - 계정 PnL 업데이트")
     logger.info("   - 실행 주기: 5초")
 
-
 # =====================================================
 # 6. 통합 백그라운드 작업 (현물 + 선물)
 # =====================================================
-
 
 async def run_all_background_tasks():
     """
@@ -413,7 +400,6 @@ async def run_all_background_tasks():
         except Exception as e:
             logger.error(f"❌ 백그라운드 작업 오류: {e}")
             await asyncio.sleep(5)
-
 
 def start_all_background_tasks():
     """통합 백그라운드 작업 시작"""

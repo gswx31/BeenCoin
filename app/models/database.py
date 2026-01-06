@@ -14,13 +14,11 @@ from sqlmodel import Field, Relationship, SQLModel
 # Enums
 # =====================================================
 
-
 class OrderSide(str, Enum):
     """주문 방향"""
 
     BUY = "BUY"
     SELL = "SELL"
-
 
 class OrderType(str, Enum):
     """주문 타입"""
@@ -29,7 +27,6 @@ class OrderType(str, Enum):
     LIMIT = "LIMIT"  # 지정가
     STOP_LOSS = "STOP_LOSS"  # 손절 (로스컷)
     TAKE_PROFIT = "TAKE_PROFIT"  # 익절 (베네핏컷)
-
 
 class OrderStatus(str, Enum):
     """주문 상태"""
@@ -40,11 +37,9 @@ class OrderStatus(str, Enum):
     CANCELLED = "CANCELLED"  # 취소됨
     REJECTED = "REJECTED"  # 거부됨
 
-
 # =====================================================
 # 사용자 모델
 # =====================================================
-
 
 class User(SQLModel, table=True):
     """사용자"""
@@ -62,11 +57,9 @@ class User(SQLModel, table=True):
     orders: list["Order"] = Relationship(back_populates="user")
     transactions: list["Transaction"] = Relationship(back_populates="user")
 
-
 # =====================================================
 # 거래 계정 모델
 # =====================================================
-
 
 class TradingAccount(SQLModel, table=True):
     """
@@ -114,11 +107,9 @@ class TradingAccount(SQLModel, table=True):
         """구매 가능 금액 (balance와 동일하지만 명시적)"""
         return self.balance
 
-
 # =====================================================
 # 주문 모델
 # =====================================================
-
 
 class Order(SQLModel, table=True):
     """주문"""
@@ -166,11 +157,9 @@ class Order(SQLModel, table=True):
     user: User | None = Relationship(back_populates="orders")
     transactions: list["Transaction"] = Relationship(back_populates="order")
 
-
 # =====================================================
 # 포지션 모델
 # =====================================================
-
 
 class Position(SQLModel, table=True):
     """포지션 (보유 자산)"""
@@ -208,11 +197,9 @@ class Position(SQLModel, table=True):
             return Decimal("0")
         return ((self.current_price - self.average_price) / self.average_price) * 100
 
-
 # =====================================================
 # 거래 내역 모델
 # =====================================================
-
 
 class Transaction(SQLModel, table=True):
     """거래 내역"""
@@ -244,11 +231,9 @@ class Transaction(SQLModel, table=True):
     user: User | None = Relationship(back_populates="transactions")
     order: Order | None = Relationship(back_populates="transactions")
 
-
 # =====================================================
 # 가격 알림 모델
 # =====================================================
-
 
 class PriceAlert(SQLModel, table=True):
     """가격 알림"""
