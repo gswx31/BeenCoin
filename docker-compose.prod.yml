@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   # ============================================
-  # Backend Service (FastAPI)
+  # Backend Service
   # ============================================
   backend:
     build:
@@ -19,15 +19,11 @@ services:
       - INITIAL_BALANCE=1000000
       - LOG_LEVEL=INFO
       - CORS_ORIGINS=http://localhost:3000,http://localhost:80
-      - REDIS_URL=redis://redis:6379          # Redis 연결 URL 추가!
     volumes:
       - backend-data:/app/beencoin.db
       - backend-logs:/app/logs
     networks:
       - beencoin-network
-    depends_on:
-      redis:
-        condition: service_healthy            # Redis가 준비될 때까지 기다림
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -36,7 +32,7 @@ services:
       start_period: 40s
 
   # ============================================
-  # Frontend Service (React 등)
+  # Frontend Service
   # ============================================
   frontend:
     build:
@@ -48,7 +44,7 @@ services:
       - "80:80"
     depends_on:
       backend:
-        condition: service_healthy            # 백엔드가 healthy 될 때까지 기다림
+        condition: service_healthy
     environment:
       - REACT_APP_API_URL=http://backend:8000
       - REACT_APP_WS_URL=ws://backend:8000
@@ -60,26 +56,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # ============================================
-  # Redis Service (캐시 + 실시간 Pub/Sub용)
-  # ============================================
-  redis:
-    image: redis:7-alpine
-    container_name: beencoin-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"                            # 로컬에서 redis-cli 테스트용 (프로덕션에선 삭제 가능)
-    volumes:
-      - redis-data:/data
-    networks:
-      - beencoin-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
-
 # ============================================
 # Volumes
 # ============================================
@@ -87,8 +63,6 @@ volumes:
   backend-data:
     driver: local
   backend-logs:
-    driver: local
-  redis-data:                                  # Redis 데이터 영속성
     driver: local
 
 # ============================================
