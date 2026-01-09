@@ -56,5 +56,5 @@ bleach>=6.1.0      # HTML Sanitization
 python-json-logger>=2.0.7
 
 # 세션 관리 (선택적 - Redis)
- redis>=5.0.1
- aioredis>=2.0.1
+# redis>=5.0.1
+# aioredis>=2.0.1
