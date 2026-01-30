@@ -1,26 +1,109 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
+.env
+.venv
 env/
 venv/
-.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# AI 도구 캐시
+.aider/
+.aider.*
+.aider.tags.cache.*
+
+# 데이터베이스
 *.sqlite3
 *.db
-.DS_Store
-.coverage
-htmlcov/
-.pytest_cache/
-*.log
+beencoin.db
 instance/
-.webassets-cache
-.scrapy
+
+# 테스트 및 커버리지
+.coverage
+.coverage.*
+.coverage*
+*.cover
+.hypothesis/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+coverage.xml
+.tox/
+nosetests.xml
+
+# 로그
+*.log
+logs/*.log
+logs/
+!logs/.gitkeep
+
+# 운영체제
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 문서
 docs/_build/
-target/
-.ipynb_checkpoints
-.python-version
-.env
+_build/
+
+# 기타
+*.egg-info/
+.installed.cfg
+*.egg
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
 celerybeat-schedule
-client/node_modules
-client/build
+
+# JavaScript (client 폴더 안에 있다면)
+client/node_modules/
+client/build/
+client/.npm
+client/.cache
+client/coverage/
+client/dist/
+client/.next/
+
+# 패키지 락 파일 (Python에는 필요 없음)
+package-lock.json
+yarn.lock
+
+# 환경 변수
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 보안
+*.pem
+*.key
+*.crt
+
+# Docker
+docker-compose.override.yml
