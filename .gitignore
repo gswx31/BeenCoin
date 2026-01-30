@@ -81,14 +81,13 @@ pip-delete-this-directory.txt
 celerybeat-schedule
 
 # JavaScript (client 폴더 안에 있다면)
-client/node_modules/
-client/build/
-client/.npm
-client/.cache
-client/coverage/
-client/dist/
-client/.next/
+client/
 
+reports/
+
+logs/
+
+script/
 # 패키지 락 파일 (Python에는 필요 없음)
 package-lock.json
 yarn.lock
