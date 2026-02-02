@@ -362,5 +362,4 @@ jobs:
 2. 통합 테스트 재실행
 3. Docker 이미지 빌드
 4. Health Check
-5. 프로덕션 배포
 
