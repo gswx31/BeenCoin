@@ -14,12 +14,6 @@
 
 ---
 
-## 💼 프로젝트 개요
-
-> **"실무 환경을 고려한 프로덕션 레벨의 백엔드 시스템"**
-
-실제 취업 현장에서 요구되는 **백엔드 개발 역량**과 **DevOps 프로세스**를 적용하여 개발한 암호화폐 거래 플랫폼입니다.
-
 ### 🎯 개발 목표
 
 - ✅ **확장 가능한 아키텍처** 설계 및 구현
@@ -46,8 +40,8 @@
 - 🔄 매수/매도 지원
 - 💸 수수료 0.1% 적용
 
-### 4. 선물 거래 (고급 기능)
-- 📊 레버리지 거래 (최대 125x)
+### 4. 선물 거래
+- 📊 레버리지 거래 
 - 🎯 자동 손절/익절
 - 📈 포지션 관리
 - 💰 미실현 손익 계산
@@ -113,8 +107,8 @@
 
 ### 핵심 기술 스택
 
-| 카테고리 | 기술 | 선택 이유 |
-|----------|------|-----------|
+| 카테고리 | 기술 |
+|----------|------|
 | **웹 프레임워크** | FastAPI 
 | **ORM** | SQLModel 
 | **데이터베이스** | SQLite , PostgreSQL 
@@ -250,109 +244,6 @@ BeenCoin/
 | **테스트 파일** | 8개 | 단위 + 통합 |
 | **미들웨어** | 2개 | 캐싱, Rate Limiting |
 | **스케줄러** | 2개 | 백그라운드 작업 |
-
----
-
-## 🏃 빠른 시작
-
-### 필수 요구사항
-
-- **Python 3.10+**
-- **Docker** (선택사항, 권장)
-- **Git**
-
----
-
-### 1. 로컬 개발 환경
-
-#### Step 1: 레포지토리 클론
-```bash
-git clone https://github.com/yourusername/beencoin.git
-cd beencoin
-```
-
-#### Step 2: 가상환경 설정
-```bash
-# 가상환경 생성
-python -m venv venv
-
-# 활성화
-# Windows
-venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-```
-
-#### Step 3: 의존성 설치
-```bash
-pip install -r requirements.txt
-```
-
-
-```bash
-# 데이터베이스
-DATABASE_URL=sqlite:///./beencoin.db
-
-# JWT 설정 (반드시 변경!)
-SECRET_KEY=your-generated-secret-key-here
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
-
-# 거래 설정
-INITIAL_BALANCE=1000000
-SUPPORTED_SYMBOLS=BTCUSDT,ETHUSDT,BNBUSDT,ADAUSDT
-
-# 로깅
-LOG_LEVEL=INFO
-
-# CORS
-CORS_ORIGINS=http://localhost:3000,http://localhost:8000
-```
-
-#### Step 5: 데이터베이스 초기화
-```bash
-python init_db.py
-```
-
-#### Step 6: 서버 실행
-```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-✅ 서버가 **http://localhost:8000** 에서 실행됩니다.
-
----
-
-### 2. Docker로 실행 (권장)
-
-```bash
-# Docker 이미지 빌드
-docker build -t beencoin-backend .
-
-# 컨테이너 실행
-docker run -d \
-  -p 8000:8000 \
-  --name beencoin \
-  -e SECRET_KEY=your-secret-key \
-  beencoin-backend
-
-# Health Check
-curl http://localhost:8000/health
-```
-
----
-
-### 3. Docker Compose로 실행
-
-```bash
-# 모든 서비스 시작 (Backend + Redis + PostgreSQL)
-docker-compose -f docker-compose.prod.yml up -d
-
-# 로그 확인
-docker-compose logs -f backend
-
-# 서비스 중지
-docker-compose down
-```
 
 ---
 
