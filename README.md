@@ -138,9 +138,6 @@ BeenCoin/
 │   ├── main.py                        # FastAPI 앱 진입점
 │   ├── main_secure.py                 # 보안 강화 버전
 │   │
-│   ├── api/                           # API 레이어
-│   │   └── v1/endpoints/
-│   │       └── auth.py                # 인증 엔드포인트
 │   │
 │   ├── background_tasks/              # 백그라운드 작업
 │   │   ├── celery_app.py             # Celery 설정
@@ -260,31 +257,31 @@ BeenCoin/
 
 #### 🔐 인증
 ```http
-POST /api/v1/auth/register      # 회원가입
-POST /api/v1/auth/login         # 로그인
-GET  /api/v1/auth/me            # 현재 사용자 정보
+POST /auth/register      # 회원가입
+POST /auth/login         # 로그인
+GET  /auth/me            # 현재 사용자 정보
 ```
 
 #### 📊 선물 거래
 ```http
-POST /api/v1/futures/open       # 포지션 오픈
-POST /api/v1/futures/close      # 포지션 클로즈
-GET  /api/v1/futures/positions  # 포지션 목록
-GET  /api/v1/futures/history    # 거래 내역
+POST /futures/open       # 포지션 오픈
+POST /futures/close      # 포지션 클로즈
+GET  /futures/positions  # 포지션 목록
+GET  /futures/history    # 거래 내역
 ```
 
 #### 📈 마켓 데이터
 ```http
-GET  /api/v1/market/coins            # 모든 코인 정보
-GET  /api/v1/market/coin/{symbol}    # 특정 코인 상세
-GET  /api/v1/market/historical/{symbol}  # 과거 데이터
+GET  /market/coins            # 모든 코인 정보
+GET  /market/coin/{symbol}    # 특정 코인 상세
+GET  /market/historical/{symbol}  # 과거 데이터
 ```
 
 #### 🔔 알림
 ```http
-POST /api/v1/alerts/create      # 가격 알림 생성
-GET  /api/v1/alerts/            # 알림 목록
-DELETE /api/v1/alerts/{id}      # 알림 삭제
+POST /alerts/create      # 가격 알림 생성
+GET  /alerts/            # 알림 목록
+DELETE /alerts/{id}      # 알림 삭제
 ```
 
 #### 🔌 WebSocket
