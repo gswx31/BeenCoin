@@ -1,0 +1,35 @@
+flowchart TD
+    Client["🖥️ Client (브라우저/모바일)"]
+
+    subgraph API["API Gateway Layer"]
+        Auth["Auth"]
+        Futures["Futures"]
+        Market["Market"]
+        WS["WebSocket"]
+    end
+
+    subgraph MW["Middleware Layer"]
+        RL["Rate Limit"]
+        Cache["Cache"]
+        AC["Auth Check"]
+    end
+
+    subgraph BL["Business Logic Layer"]
+        FS["Futures Service"]
+        BS["Binance Service"]
+        subgraph BG["Background Tasks"]
+            Scheduler["Scheduler"]
+            Celery["Celery"]
+        end
+    end
+
+    DAL["Data Access Layer\n(SQLModel ORM + Redis Cache)"]
+    DB["Database\n(SQLite / PostgreSQL)"]
+    ExtAPI["External API (Binance)"]
+
+    Client -->|HTTPS / WSS| API
+    API --> MW
+    MW --> BL
+    BL --> DAL
+    DAL --> DB
+    BS --> ExtAPI
