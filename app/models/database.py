@@ -274,3 +274,6 @@ class PriceAlert(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     triggered_at: datetime | None = None
+# 대신 이걸 추가
+class Base(SQLModel):
+    pass

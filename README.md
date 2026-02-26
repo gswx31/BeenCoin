@@ -290,6 +290,11 @@ ws://localhost:8000/ws/realtime  # 실시간 가격 스트림
 ```
 
 ---
+## 📊 데이터베이스 구조
+
+### ERD (Entity Relationship Diagram)
+
+![데이터베이스 ERD](images/erd.png)
 
 ## 🧪 테스트
 
