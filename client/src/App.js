@@ -6,6 +6,9 @@ import Dashboard from './components/Dashboard';
 import Portfolio from './components/Portfolio';
 import OrderForm from './components/OrderForm';
 import History from './components/History';
+import Analytics from './components/Analytics';
+import Leaderboard from './components/Leaderboard';
+import Achievements from './components/Achievements';
 import Layout from './components/Layout';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -28,6 +31,9 @@ function App() {
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/order" element={<OrderForm />} />
             <Route path="/history" element={<History />} />
+            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/leaderboard" element={<Leaderboard />} />
+            <Route path="/achievements" element={<Achievements />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" />} />
         </Routes>

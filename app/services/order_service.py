@@ -179,6 +179,29 @@ def _execute_fill(
     session.add(tx)
     session.commit()
 
+    # -- Post-trade hooks: streak, achievements, missions --
+    try:
+        from app.services.analytics_service import update_streak
+        from app.services.achievement_service import check_and_award
+        from app.services.mission_service import progress_missions
+
+        if order.side == 'SELL':
+            update_streak(session, order.user_id, realized_pnl)
+
+        check_and_award(session, order.user_id, {
+            "trade_notional": float(notional),
+            "trade_hour": datetime.utcnow().hour,
+        })
+
+        progress_missions(
+            session, order.user_id,
+            trade_symbol=order.symbol, trade_side=order.side,
+            trade_notional=float(notional), realized_pnl=float(realized_pnl),
+            order_type=order.order_type,
+        )
+    except Exception as e:
+        print(f"[PostTrade] Hook error: {e}")
+
 
 def cancel_order(session: Session, user_id: int, order_id: int) -> Order:
     order = session.exec(

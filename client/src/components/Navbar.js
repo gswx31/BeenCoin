@@ -5,6 +5,9 @@ const navItems = [
   { path: '/dashboard', label: 'Dashboard' },
   { path: '/order', label: 'Trade' },
   { path: '/portfolio', label: 'Portfolio' },
+  { path: '/analytics', label: 'Analytics' },
+  { path: '/leaderboard', label: 'Ranking' },
+  { path: '/achievements', label: 'Achievements' },
   { path: '/history', label: 'History' },
 ];
 
