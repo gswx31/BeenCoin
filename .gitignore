@@ -15,12 +15,21 @@ htmlcov/
 *.log
 instance/
 .webassets-cache
-.scrapy
-docs/_build/
-target/
 .ipynb_checkpoints
 .python-version
 .env
 celerybeat-schedule
-client/node_modules
-client/build
+.vscode/
+
+# Frontend
+client/node_modules/
+client/build/
+client/.env
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Nested duplicates
+BeenCoin/
+BeenCoin-1/
