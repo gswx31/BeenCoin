@@ -22,6 +22,7 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 app.add_middleware(
