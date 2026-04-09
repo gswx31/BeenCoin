@@ -20,7 +20,7 @@ def _alert_to_out(a) -> AlertOut:
     )
 
 
-@router.post("/", response_model=AlertOut)
+@router.post("", response_model=AlertOut)
 def create_alert(
     alert: AlertCreate,
     current_user=Depends(get_current_user),
@@ -33,7 +33,7 @@ def create_alert(
     return _alert_to_out(result)
 
 
-@router.get("/", response_model=List[AlertOut])
+@router.get("", response_model=List[AlertOut])
 def list_alerts(
     current_user=Depends(get_current_user),
     session: Session = Depends(get_session),

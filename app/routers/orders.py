@@ -38,7 +38,7 @@ def _order_to_out(o) -> OrderOut:
     )
 
 
-@router.post("/", response_model=OrderOut)
+@router.post("", response_model=OrderOut)
 async def place_order(
     order: OrderCreate,
     current_user: User = Depends(get_current_user),
@@ -48,7 +48,7 @@ async def place_order(
     return _order_to_out(result)
 
 
-@router.get("/", response_model=List[OrderOut])
+@router.get("", response_model=List[OrderOut])
 def get_orders(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),

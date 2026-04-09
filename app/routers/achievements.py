@@ -8,7 +8,7 @@ from app.services.mission_service import get_daily_missions, claim_mission_rewar
 router = APIRouter(prefix="/achievements", tags=["achievements"])
 
 
-@router.get("/")
+@router.get("")
 def my_achievements(current_user=Depends(get_current_user), session: Session = Depends(get_session)):
     return get_user_achievements(session, current_user.id)
 

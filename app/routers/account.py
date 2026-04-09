@@ -12,7 +12,7 @@ from typing import List
 router = APIRouter(prefix="/account", tags=["account"])
 
 
-@router.get("/", response_model=AccountOut)
+@router.get("", response_model=AccountOut)
 def get_account(current_user=Depends(get_current_user), session: Session = Depends(get_session)):
     return get_account_summary(session, current_user.id)
 
