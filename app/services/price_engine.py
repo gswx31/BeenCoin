@@ -65,23 +65,32 @@ class PriceEngine:
     async def _monitor_symbol(self, symbol: str):
         from app.services.binance_service import get_client
 
+        tick_count = 0
+
         while self._running:
             try:
                 client = await get_client()
                 from binance import BinanceSocketManager
                 bsm = BinanceSocketManager(client)
-                ts = bsm.trade_socket(symbol)
+                ts = bsm.kline_socket(symbol, interval='1s')  # 1s kline = less data than trade stream
                 async with ts as tscm:
                     while self._running:
                         res = await tscm.recv()
-                        if 'p' not in res:
+                        k = res.get('k', {})
+                        price_str = k.get('c')  # close price
+                        if not price_str:
                             continue
-                        price = Decimal(res['p'])
+                        price = Decimal(price_str)
                         self._latest_prices[symbol] = price
 
+                        # Broadcast every tick
                         await self._broadcast(symbol, price)
-                        await self._check_orders(symbol, price)
-                        await self._check_price_alerts(symbol, price)
+
+                        # Check orders/alerts every 5 ticks to avoid blocking
+                        tick_count += 1
+                        if tick_count % 5 == 0:
+                            await self._check_orders(symbol, price)
+                            await self._check_price_alerts(symbol, price)
 
             except asyncio.CancelledError:
                 break
