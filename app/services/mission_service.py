@@ -104,16 +104,16 @@ def progress_missions(session: Session, user_id: int, trade_symbol: str, trade_s
         )
     ).all()
 
-    # Today's unique symbols traded
+    # Today's unique symbols traded (filtered in SQL)
+    from datetime import datetime as dt
+    today_start = dt.strptime(today, "%Y-%m-%d")
     today_txs = session.exec(
         select(TransactionHistory).where(
             TransactionHistory.user_id == user_id,
+            TransactionHistory.timestamp >= today_start,
         )
     ).all()
-    today_symbols = set(
-        t.symbol for t in today_txs
-        if t.timestamp.strftime("%Y-%m-%d") == today
-    )
+    today_symbols = set(t.symbol for t in today_txs)
 
     for m in missions:
         updated = False

@@ -15,11 +15,10 @@ from collections import defaultdict
 from sqlmodel import Session, select
 from app.core.database import engine
 from app.core.config import settings
-from app.models.database import Order, Position, TradingAccount, PriceAlert, TransactionHistory
-from app.services.fee_service import calculate_fee, update_trading_volume
-from app.services.order_validator import round_price
+from app.models.database import Order, Position, TradingAccount, PriceAlert
+from app.services.fee_service import calculate_fee
 
-POSITION_UPDATE_INTERVAL = 10  # seconds
+POSITION_UPDATE_INTERVAL = 10
 
 
 class PriceEngine:
@@ -29,6 +28,7 @@ class PriceEngine:
         self._latest_prices: Dict[str, Decimal] = {}
         self._ws_subscribers: Dict[str, Set] = defaultdict(set)
         self._alert_callbacks: list = []
+        self._fill_lock = asyncio.Lock()  # prevent concurrent fills
 
     @property
     def latest_prices(self):
@@ -46,7 +46,6 @@ class PriceEngine:
     def on_alert_trigger(self, callback: Callable):
         self._alert_callbacks.append(callback)
 
-    # -- Lifecycle --
     async def start(self):
         if self._running:
             return
@@ -63,7 +62,6 @@ class PriceEngine:
         self._tasks.clear()
         print("[PriceEngine] Stopped")
 
-    # -- Core: per-symbol WebSocket loop --
     async def _monitor_symbol(self, symbol: str):
         from app.services.binance_service import get_client
 
@@ -101,76 +99,102 @@ class PriceEngine:
                 dead.add(ws)
         self._ws_subscribers[symbol] -= dead
 
-    # -- Order Matching (Limit + Stop-Loss + Take-Profit) --
     async def _check_orders(self, symbol: str, current_price: Decimal):
-        with Session(engine) as session:
-            pending_orders = session.exec(
-                select(Order).where(
-                    Order.symbol == symbol,
-                    Order.order_status == 'PENDING',
-                )
-            ).all()
+        async with self._fill_lock:  # prevent concurrent fills on same order
+            with Session(engine) as session:
+                pending_orders = session.exec(
+                    select(Order).where(
+                        Order.symbol == symbol,
+                        Order.order_status == 'PENDING',
+                    )
+                ).all()
 
-            for order in pending_orders:
-                should_fill = False
-                fill_price = current_price
+                for order in pending_orders:
+                    fill_result = self._should_fill(order, current_price)
+                    if fill_result is None:
+                        continue
 
-                if order.order_type == 'LIMIT':
-                    # Limit BUY: fill when price <= limit price, at limit price (maker)
-                    # Limit SELL: fill when price >= limit price, at limit price (maker)
-                    if order.side == 'BUY' and current_price <= order.price:
-                        fill_price = order.price  # Limit orders fill at limit price
-                        should_fill = True
-                    elif order.side == 'SELL' and current_price >= order.price:
-                        fill_price = order.price
-                        should_fill = True
-
-                elif order.order_type == 'STOP_LOSS_LIMIT':
-                    # Triggered when price crosses stop_price, then becomes limit at order.price
-                    if order.side == 'SELL' and current_price <= order.stop_price:
-                        fill_price = order.price if order.price and current_price >= order.price else current_price
-                        should_fill = True
-                    elif order.side == 'BUY' and current_price >= order.stop_price:
-                        fill_price = order.price if order.price and current_price <= order.price else current_price
-                        should_fill = True
-
-                elif order.order_type == 'TAKE_PROFIT_LIMIT':
-                    # Triggered when price reaches profit target
-                    if order.side == 'SELL' and current_price >= order.stop_price:
-                        fill_price = order.price if order.price and current_price >= order.price else current_price
-                        should_fill = True
-                    elif order.side == 'BUY' and current_price <= order.stop_price:
-                        fill_price = order.price if order.price and current_price <= order.price else current_price
-                        should_fill = True
-
-                if should_fill:
+                    fill_price = fill_result
                     try:
                         self._execute_engine_fill(session, order, fill_price)
                         print(f"[PriceEngine] Filled #{order.id}: {order.side} {order.quantity} {order.symbol} @ {fill_price}")
                     except Exception as e:
                         print(f"[PriceEngine] Fill failed #{order.id}: {e}")
-                        order.order_status = 'CANCELLED'
-                        order.updated_at = datetime.utcnow()
-                        session.add(order)
-                        session.commit()
+                        session.rollback()
+                        try:
+                            order = session.exec(select(Order).where(Order.id == order.id)).first()
+                            if order and order.order_status == 'PENDING':
+                                order.order_status = 'CANCELLED'
+                                order.updated_at = datetime.utcnow()
+                                session.add(order)
+                                session.commit()
+                        except Exception:
+                            pass
+
+    def _should_fill(self, order: Order, current_price: Decimal) -> Optional[Decimal]:
+        """Return fill price if order should be filled, None otherwise."""
+
+        if order.order_type == 'LIMIT':
+            # Limit BUY: fill at limit price when market <= limit
+            if order.side == 'BUY' and current_price <= order.price:
+                return order.price
+            # Limit SELL: fill at limit price when market >= limit
+            if order.side == 'SELL' and current_price >= order.price:
+                return order.price
+
+        elif order.order_type == 'STOP_LOSS_LIMIT':
+            # Stop-Loss SELL: triggered when price drops to stop_price
+            # Then fills at limit price (order.price) — but only if market is still >= limit
+            if order.side == 'SELL' and current_price <= order.stop_price:
+                if order.price and current_price >= order.price:
+                    return order.price  # fill at limit price
+                return current_price  # market already below limit, fill at market
+
+            # Stop-Loss BUY: triggered when price rises to stop_price
+            if order.side == 'BUY' and current_price >= order.stop_price:
+                if order.price and current_price <= order.price:
+                    return order.price
+                return current_price
+
+        elif order.order_type == 'TAKE_PROFIT_LIMIT':
+            # Take-Profit SELL: triggered when price rises to stop_price (profit target)
+            if order.side == 'SELL' and current_price >= order.stop_price:
+                if order.price and current_price >= order.price:
+                    return order.price
+                return current_price
+
+            # Take-Profit BUY: triggered when price drops to stop_price
+            if order.side == 'BUY' and current_price <= order.stop_price:
+                if order.price and current_price <= order.price:
+                    return order.price
+                return current_price
+
+        return None
 
     def _execute_engine_fill(self, session: Session, order: Order, fill_price: Decimal):
-        """Fill order via engine (used for limit/stop orders)."""
+        """Fill order via engine — single atomic transaction."""
+        # Re-check order status to prevent double fill
+        fresh_order = session.exec(select(Order).where(Order.id == order.id)).first()
+        if not fresh_order or fresh_order.order_status != 'PENDING':
+            return
+
         account = session.exec(
-            select(TradingAccount).where(TradingAccount.user_id == order.user_id)
+            select(TradingAccount).where(TradingAccount.user_id == fresh_order.user_id)
         ).first()
         if not account:
             return
 
-        qty = order.quantity - order.filled_quantity
-        is_maker = order.order_type == 'LIMIT'  # Limit = maker, Stop = taker
-        fee, fee_rate, fee_asset, _ = calculate_fee(fill_price, qty, is_maker, account)
+        qty = fresh_order.quantity - fresh_order.filled_quantity
+        if qty <= Decimal('0'):
+            return
 
-        # Use shared fill logic from order_service
-        from app.services.order_service import _execute_fill
-        _execute_fill(session, order, account, qty, fill_price, fee, fee_asset, is_maker)
+        is_maker = fresh_order.order_type == 'LIMIT'
+        fee, _, fee_asset, _ = calculate_fee(fill_price, qty, is_maker, account)
 
-    # -- Price Alert Matching --
+        from app.services.order_service import _apply_fill
+        _apply_fill(session, fresh_order, account, qty, fill_price, fee, fee_asset, is_maker)
+        session.commit()
+
     async def _check_price_alerts(self, symbol: str, current_price: Decimal):
         with Session(engine) as session:
             alerts = session.exec(
@@ -196,11 +220,13 @@ class PriceEngine:
 
                     for cb in self._alert_callbacks:
                         try:
-                            await cb(alert, current_price)
+                            if asyncio.iscoroutinefunction(cb):
+                                await cb(alert, current_price)
+                            else:
+                                cb(alert, current_price)
                         except Exception as e:
                             print(f"[PriceEngine] Alert cb error: {e}")
 
-    # -- Periodic Position Value Update --
     async def _position_update_loop(self):
         while self._running:
             await asyncio.sleep(POSITION_UPDATE_INTERVAL)
@@ -218,5 +244,4 @@ class PriceEngine:
                 print(f"[PriceEngine] Position update error: {e}")
 
 
-# Singleton
 price_engine = PriceEngine()

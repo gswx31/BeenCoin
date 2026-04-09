@@ -149,3 +149,4 @@ def update_streak(session: Session, user_id: int, realized_pnl: Decimal):
     else:
         user.current_streak = 0
     session.add(user)
+    session.commit()

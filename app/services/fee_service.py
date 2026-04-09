@@ -37,14 +37,14 @@ def calculate_fee(
     notional = price * quantity
     fee = notional * fee_rate
 
-    # BNB discount
+    # BNB discount (simulated — discount applied, fee still charged in USDT)
     is_bnb_discount = False
     fee_asset = "USDT"
     if account.use_bnb_fee:
         discount = Decimal(str(settings.BNB_FEE_DISCOUNT))
         fee = fee * (Decimal('1') - discount)
         is_bnb_discount = True
-        fee_asset = "BNB"
+        fee_asset = "USDT(BNB)"  # Marks BNB discount was applied
 
     fee = fee.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
     return fee, fee_rate, fee_asset, is_bnb_discount
