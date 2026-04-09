@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.models.database import create_db_and_tables
-from app.routers import auth, orders, account, websocket, alerts, analytics, leaderboard, achievements
+from app.routers import auth, orders, account, websocket, alerts, analytics, leaderboard, achievements, market
 from app.services.binance_service import close_client
 from app.services.price_engine import price_engine
 from contextlib import asynccontextmanager
@@ -40,6 +40,7 @@ app.include_router(alerts.router, prefix=settings.API_V1_STR)
 app.include_router(analytics.router, prefix=settings.API_V1_STR)
 app.include_router(leaderboard.router, prefix=settings.API_V1_STR)
 app.include_router(achievements.router, prefix=settings.API_V1_STR)
+app.include_router(market.router, prefix=settings.API_V1_STR)
 app.include_router(websocket.router, prefix=settings.API_V1_STR)
 
 static_dir = os.path.join(os.path.dirname(__file__), "..", "client", "build")
