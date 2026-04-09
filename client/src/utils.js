@@ -5,22 +5,20 @@ export function formatUSD(value) {
   if (abs >= 1_000_000) {
     return (num < 0 ? '-' : '') + '$' + (abs / 1_000_000).toFixed(2) + 'M';
   }
-  return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return '$' + num.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function formatPrice(value) {
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (num == null || isNaN(num)) return '$0.00';
-  if (num >= 1000) {
-    return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  }
-  return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  if (num >= 1000) return '$' + num.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return '$' + num.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
 
 export function formatPercent(value) {
   const num = typeof value === 'string' ? parseFloat(value) : value;
   if (num == null || isNaN(num)) return '0.00%';
-  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+  return num.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
 }
 
 export function formatQty(value, decimals = 6) {
@@ -47,10 +45,11 @@ export function timeAgo(dateStr) {
   const date = new Date(dateStr);
   const now = new Date();
   const diff = Math.floor((now - date) / 1000);
-  if (diff < 60) return 'Just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (diff < 60) return '방금 전';
+  if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+  return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
 }
 
 export function signedFormat(value, formatter = formatUSD) {

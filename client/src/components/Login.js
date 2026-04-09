@@ -15,10 +15,10 @@ const Login = () => {
     try {
       const { data } = await api.post('/auth/login', { username, password });
       localStorage.setItem('token', data.access_token);
-      toast.success('Welcome back!');
+      toast.success('다시 만나서 반가워요! 🎉');
       navigate('/dashboard');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Login failed');
+      toast.error(error.response?.data?.detail || '로그인에 실패했어요 😢');
     } finally {
       setLoading(false);
     }
@@ -28,60 +28,36 @@ const Login = () => {
     <div className="min-h-screen flex items-center justify-center bg-dark-900 px-4">
       <div className="w-full max-w-sm fade-in">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-accent rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span className="text-dark-900 font-black text-2xl">B</span>
-          </div>
-          <h1 className="text-2xl font-bold text-white mb-1">BeenCoin</h1>
-          <p className="text-muted text-sm">Crypto Paper Trading Simulator</p>
+          <div className="text-5xl mb-3">🪙</div>
+          <h1 className="text-2xl font-bold text-white mb-1">빈코인</h1>
+          <p className="text-muted text-sm">가상화폐 모의투자 시뮬레이터</p>
         </div>
-        <div className="bg-dark-800 rounded-2xl p-8 border border-dark-600">
+        <div className="bg-dark-800 rounded-3xl p-8 border border-dark-600">
+          <h2 className="text-lg font-semibold text-white mb-6 text-center">로그인</h2>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-muted text-xs font-medium mb-2 uppercase tracking-wider">Username</label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-4 py-3 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
-                placeholder="Enter username"
-                required
-                autoFocus
-              />
+              <label className="block text-muted text-xs font-medium mb-2">아이디</label>
+              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
+                className="w-full px-4 py-3 bg-dark-700 border border-dark-600 rounded-2xl text-white placeholder-dark-500 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all"
+                placeholder="아이디를 입력해주세요" required autoFocus />
             </div>
             <div>
-              <label className="block text-muted text-xs font-medium mb-2 uppercase tracking-wider">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 bg-dark-700 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
-                placeholder="Enter password"
-                required
-              />
+              <label className="block text-muted text-xs font-medium mb-2">비밀번호</label>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 bg-dark-700 border border-dark-600 rounded-2xl text-white placeholder-dark-500 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all"
+                placeholder="비밀번호를 입력해주세요" required />
             </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 bg-accent text-dark-900 font-semibold rounded-lg hover:bg-accent-hover active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <span className="flex items-center justify-center space-x-2">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                  <span>Signing in...</span>
-                </span>
-              ) : 'Sign In'}
+            <button type="submit" disabled={loading}
+              className="w-full py-3 bg-accent text-white font-semibold rounded-2xl hover:bg-accent-hover active:scale-[0.98] transition-all disabled:opacity-50">
+              {loading ? '로그인 중...' : '로그인'}
             </button>
           </form>
           <p className="mt-6 text-center text-muted text-sm">
-            No account?{' '}
-            <Link to="/register" className="text-accent hover:text-accent-hover transition-colors font-medium">
-              Create one
-            </Link>
+            아직 계정이 없나요?{' '}
+            <Link to="/register" className="text-accent hover:text-accent-hover font-medium">회원가입</Link>
           </p>
         </div>
-        <p className="text-center text-dark-500 text-xs mt-6">
-          Virtual trading with $1,000,000 starting balance
-        </p>
+        <p className="text-center text-dark-500 text-xs mt-6">💰 시작 자금 $1,000,000으로 모의투자!</p>
       </div>
     </div>
   );

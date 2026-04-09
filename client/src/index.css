@@ -1,62 +1,48 @@
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: #0b0e11;
-  color: #eaecef;
+  background-color: #0d1117;
+  color: #e6edf3;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #1e2329;
-}
-::-webkit-scrollbar-thumb {
-  background: #474d57;
-  border-radius: 3px;
-}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #161b22; }
+::-webkit-scrollbar-thumb { background: #484f58; border-radius: 3px; }
 
 input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-input[type="number"] {
-  -moz-appearance: textfield;
-}
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
 
 @keyframes skeleton {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.15; }
 }
-.skeleton {
-  animation: skeleton 1.5s ease-in-out infinite;
-  background: #2b3139;
-  border-radius: 0.5rem;
-}
+.skeleton { animation: skeleton 1.5s ease-in-out infinite; background: #21262d; border-radius: 0.75rem; }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
+.fade-in { animation: fadeIn 0.35s ease-out; }
 
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
-.pulse-dot {
-  animation: pulse-dot 2s ease-in-out infinite;
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+@keyframes pop {
+  0% { transform: scale(0.95); }
+  50% { transform: scale(1.02); }
+  100% { transform: scale(1); }
 }
+.pop-in { animation: pop 0.3s ease-out; }
