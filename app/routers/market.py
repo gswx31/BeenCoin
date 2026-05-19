@@ -10,9 +10,9 @@ VALID_INTERVALS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h"
 
 async def _fetch_klines(symbol: str, interval: str, limit: int):
     if symbol not in settings.SUPPORTED_SYMBOLS:
-        raise HTTPException(status_code=400, detail="Unsupported symbol")
+        raise HTTPException(status_code=400, detail="지원하지 않는 코인이에요")
     if interval not in VALID_INTERVALS:
-        raise HTTPException(status_code=400, detail=f"Invalid interval")
+        raise HTTPException(status_code=400, detail="지원하지 않는 시간 단위예요")
 
     client = await get_client()
     klines = await client.get_klines(symbol=symbol, interval=interval, limit=limit)

@@ -43,7 +43,7 @@ def _issue_tokens(session: Session, user: User) -> dict:
 def register(request: Request, user: UserCreate, session: Session = Depends(get_session)):
     existing = session.exec(select(User).where(User.username == user.username)).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Username already registered")
+        raise HTTPException(status_code=400, detail="이미 사용 중인 아이디예요")
     db_user = User(username=user.username, hashed_password=get_password_hash(user.password))
     session.add(db_user)
     session.commit()
@@ -73,9 +73,9 @@ def register(request: Request, user: UserCreate, session: Session = Depends(get_
 def login(request: Request, user: UserLogin, session: Session = Depends(get_session)):
     db_user = session.exec(select(User).where(User.username == user.username)).first()
     if not db_user or not verify_password(user.password, db_user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 틀렸어요")
     if not db_user.is_active:
-        raise HTTPException(status_code=403, detail="User is inactive")
+        raise HTTPException(status_code=403, detail="비활성화된 계정이에요")
     return _issue_tokens(session, db_user)
 
 
@@ -91,7 +91,7 @@ def refresh(request: Request, body: RefreshRequest, session: Session = Depends(g
     rt = session.exec(select(RefreshToken).where(RefreshToken.token_hash == hashed)).first()
 
     if not rt:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
+        raise HTTPException(status_code=401, detail="세션이 만료됐어요. 다시 로그인해주세요")
 
     if rt.revoked:
         # 재사용 감지! 해당 유저의 모든 refresh token 무효화
@@ -102,14 +102,14 @@ def refresh(request: Request, body: RefreshRequest, session: Session = Depends(g
             t.revoked = True
             session.add(t)
         session.commit()
-        raise HTTPException(status_code=401, detail="Refresh token reuse detected — all sessions revoked")
+        raise HTTPException(status_code=401, detail="보안 문제로 모든 세션이 종료됐어요. 다시 로그인해주세요")
 
     if rt.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=401, detail="Refresh token expired")
+        raise HTTPException(status_code=401, detail="세션이 만료됐어요. 다시 로그인해주세요")
 
     user = session.exec(select(User).where(User.id == rt.user_id)).first()
     if not user or not user.is_active:
-        raise HTTPException(status_code=401, detail="User inactive")
+        raise HTTPException(status_code=401, detail="비활성화된 계정이에요")
 
     # Rotate: 기존 토큰 폐기 + 새 토큰 발급
     rt.revoked = True

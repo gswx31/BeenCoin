@@ -3,13 +3,14 @@ import api from '../api';
 import { formatUSD, toNum, getWsUrl } from '../utils';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
+import HelpTooltip from './HelpTooltip';
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'];
 const ORDER_TYPES = [
-  { key: 'MARKET', label: '시장가' },
-  { key: 'LIMIT', label: '지정가' },
-  { key: 'STOP_LOSS_LIMIT', label: '손절매' },
-  { key: 'TAKE_PROFIT_LIMIT', label: '익절매' },
+  { key: 'MARKET', label: '시장가', help: '지금 시장 가격으로 바로 사거나 팔아요. 빠르지만 가격이 약간 변할 수 있어요.' },
+  { key: 'LIMIT', label: '지정가', help: '내가 원하는 가격에 도달하면 자동으로 거래돼요. 예: 5만 달러에 사고 싶을 때.' },
+  { key: 'STOP_LOSS_LIMIT', label: '손절매', help: '가격이 너무 떨어지면 자동으로 팔아서 손실을 막아요.' },
+  { key: 'TAKE_PROFIT_LIMIT', label: '익절매', help: '가격이 목표까지 오르면 자동으로 팔아서 수익을 챙겨요.' },
 ];
 const FEE_RATE_DEFAULT = 0.001;
 
@@ -114,15 +115,24 @@ const OrderForm = () => {
             </div>
 
             <div>
-              <label className="block text-muted text-[10px] font-medium mb-2">주문 유형</label>
+              <label className="flex items-center text-muted text-[10px] font-medium mb-2">
+                주문 유형
+                <HelpTooltip text="시장가는 지금 바로, 지정가는 원하는 가격에 도달하면 자동 체결돼요." />
+              </label>
               <div className="grid grid-cols-2 gap-2">
-                {ORDER_TYPES.map(({ key, label }) => (
+                {ORDER_TYPES.map(({ key, label, help }) => (
                   <button key={key} type="button" onClick={() => setOrderType(key)}
+                    title={help}
                     className={`py-2 rounded-xl text-xs font-medium transition-colors ${
                       orderType === key ? 'bg-dark-600 text-white ring-1 ring-dark-500' : 'bg-dark-700 text-muted hover:text-white border border-dark-600'
                     }`}>{label}</button>
                 ))}
               </div>
+              {orderType && (
+                <p className="text-[10px] text-dark-400 mt-1.5 leading-relaxed">
+                  💡 {ORDER_TYPES.find(t => t.key === orderType)?.help}
+                </p>
+              )}
             </div>
 
             {needsStopPrice && (

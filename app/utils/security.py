@@ -29,10 +29,10 @@ def decode_access_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("type") and payload["type"] != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
+            raise HTTPException(status_code=401, detail="유효하지 않은 토큰이에요")
         return payload
     except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 토큰이에요")
 
 
 # -- Refresh Token (opaque random string, DB 저장) --

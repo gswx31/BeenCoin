@@ -57,6 +57,26 @@ const Dashboard = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* 첫 방문 안내 (포지션 0개일 때만) */}
+      {positions.length === 0 && (
+        <div className="bg-gradient-to-br from-accent/10 to-mint/10 rounded-2xl border border-accent/20 p-5 mb-6 fade-in">
+          <div className="flex items-start space-x-3">
+            <span className="text-3xl">👋</span>
+            <div className="flex-1">
+              <p className="text-white font-bold text-sm mb-1">처음이신가요?</p>
+              <p className="text-muted text-xs leading-relaxed">
+                실제 돈이 아닌 가상 자금 <span className="text-accent font-bold">$1,000,000</span>으로 안전하게 시작하세요.
+                바이낸스의 실시간 시세를 그대로 사용해요.
+              </p>
+              <button onClick={() => navigate('/order')}
+                className="mt-3 px-4 py-2 bg-accent text-white text-xs font-semibold rounded-xl hover:bg-accent-hover transition-colors">
+                첫 거래 시작하기 →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-6">
         <TierBadge />
       </div>

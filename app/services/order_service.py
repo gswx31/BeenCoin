@@ -17,13 +17,13 @@ from datetime import datetime
 
 async def create_order(session: Session, user_id: int, order_data: OrderCreate) -> Order:
     if order_data.symbol not in settings.SUPPORTED_SYMBOLS:
-        raise HTTPException(status_code=400, detail="Unsupported symbol")
+        raise HTTPException(status_code=400, detail="지원하지 않는 코인이에요")
 
     account = session.exec(
         select(TradingAccount).where(TradingAccount.user_id == user_id)
     ).first()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="계좌를 찾을 수 없어요")
 
     # -- Binance-style validation --
     validate_quantity(order_data.symbol, order_data.quantity)
@@ -47,7 +47,7 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
         est_fee, _, _, _ = calculate_fee(est_price, order_data.quantity, is_maker, account)
         est_cost = est_price * order_data.quantity + est_fee
         if account.balance < est_cost:
-            raise HTTPException(status_code=400, detail="Insufficient balance")
+            raise HTTPException(status_code=400, detail="잔고가 부족해요")
 
     if order_data.side == 'SELL':
         position = session.exec(
@@ -57,7 +57,7 @@ async def create_order(session: Session, user_id: int, order_data: OrderCreate) 
             )
         ).first()
         if not position or position.quantity < order_data.quantity:
-            raise HTTPException(status_code=400, detail="Insufficient quantity to sell")
+            raise HTTPException(status_code=400, detail="보유 수량이 부족해요")
 
     # -- Create order + execute in single transaction --
     order = Order(
@@ -131,7 +131,7 @@ def _apply_fill(
         total_buy_cost = notional + fee
         # Balance already validated before this point, but double-check
         if account.balance < total_buy_cost:
-            raise HTTPException(status_code=400, detail="Insufficient balance")
+            raise HTTPException(status_code=400, detail="잔고가 부족해요")
 
         new_qty = position.quantity + qty
         position.total_cost += total_buy_cost
@@ -141,7 +141,7 @@ def _apply_fill(
 
     elif order.side == 'SELL':
         if position.quantity < qty:
-            raise HTTPException(status_code=400, detail="Insufficient quantity to sell")
+            raise HTTPException(status_code=400, detail="보유 수량이 부족해요")
 
         sell_proceeds = notional - fee
         cost_basis = position.average_price * qty
@@ -220,9 +220,9 @@ def cancel_order(session: Session, user_id: int, order_id: int) -> Order:
         select(Order).where(Order.id == order_id, Order.user_id == user_id)
     ).first()
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없어요")
     if order.order_status != 'PENDING':
-        raise HTTPException(status_code=400, detail="Only pending orders can be cancelled")
+        raise HTTPException(status_code=400, detail="대기 중인 주문만 취소할 수 있어요")
     order.order_status = 'CANCELLED'
     order.updated_at = datetime.utcnow()
     session.add(order)
@@ -255,7 +255,7 @@ def get_account_summary(session: Session, user_id: int) -> dict:
         select(TradingAccount).where(TradingAccount.user_id == user_id)
     ).first()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="계좌를 찾을 수 없어요")
     positions = session.exec(
         select(Position).where(Position.account_id == account.id)
     ).all()
@@ -284,7 +284,7 @@ def toggle_bnb_fee(session: Session, user_id: int, use_bnb: bool) -> dict:
         select(TradingAccount).where(TradingAccount.user_id == user_id)
     ).first()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="계좌를 찾을 수 없어요")
     account.use_bnb_fee = use_bnb
     session.add(account)
     session.commit()
@@ -295,9 +295,9 @@ def toggle_bnb_fee(session: Session, user_id: int, use_bnb: bool) -> dict:
 
 def create_price_alert(session, user_id, symbol, target_price, condition, memo=""):
     if symbol not in settings.SUPPORTED_SYMBOLS:
-        raise HTTPException(status_code=400, detail="Unsupported symbol")
+        raise HTTPException(status_code=400, detail="지원하지 않는 코인이에요")
     if condition not in ('ABOVE', 'BELOW'):
-        raise HTTPException(status_code=400, detail="Condition must be ABOVE or BELOW")
+        raise HTTPException(status_code=400, detail="조건은 상향 또는 하향이어야 해요")
     alert = PriceAlert(
         user_id=user_id, symbol=symbol,
         target_price=target_price, condition=condition, memo=memo,
@@ -320,6 +320,6 @@ def delete_price_alert(session, user_id, alert_id):
         select(PriceAlert).where(PriceAlert.id == alert_id, PriceAlert.user_id == user_id)
     ).first()
     if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
+        raise HTTPException(status_code=404, detail="알림을 찾을 수 없어요")
     session.delete(alert)
     session.commit()

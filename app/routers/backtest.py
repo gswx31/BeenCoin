@@ -42,7 +42,7 @@ async def run_backtest(body: BacktestRequest, _=Depends(get_current_user)):
     elif body.strategy == "dca":
         result = engine.run_dca(body.dca_period_candles)
     else:
-        raise HTTPException(status_code=400, detail="Unknown strategy")
+        raise HTTPException(status_code=400, detail="알 수 없는 전략이에요")
 
     return {
         "strategy": body.strategy,

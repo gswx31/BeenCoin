@@ -31,7 +31,7 @@ def test_insufficient_balance_rejected(client, auth_headers):
         "order_type": "MARKET", "quantity": "1000",
     }, headers=auth_headers)
     assert res.status_code == 400
-    assert "Insufficient" in res.json()["detail"]
+    assert "잔고" in res.json()["detail"] or "Insufficient" in res.json()["detail"]
 
 
 def test_sell_without_position_rejected(client, auth_headers):

@@ -37,7 +37,7 @@ def apply_referral(session: Session, new_user_id: int, code: str) -> dict:
     code = code.strip().upper()
     new_user = session.exec(select(User).where(User.id == new_user_id)).first()
     if not new_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없어요")
     if new_user.referred_by_user_id:
         raise HTTPException(status_code=400, detail="이미 추천 코드를 사용하셨어요")
 
@@ -74,7 +74,7 @@ def apply_referral(session: Session, new_user_id: int, code: str) -> dict:
 def get_referral_info(session: Session, user_id: int) -> dict:
     user = session.exec(select(User).where(User.id == user_id)).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없어요")
     assign_referral_code_if_missing(session, user)
 
     referred_by_username = None

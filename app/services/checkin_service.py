@@ -44,7 +44,7 @@ def get_checkin_status(session: Session, user_id: int) -> dict:
     """오늘 출석 가능 여부 + 연속일 + 다음 보상."""
     user = session.exec(select(User).where(User.id == user_id)).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없어요")
 
     today = datetime.utcnow().strftime("%Y-%m-%d")
     yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -72,7 +72,7 @@ def do_checkin(session: Session, user_id: int) -> dict:
     """출석 처리 + 보상 지급."""
     user = session.exec(select(User).where(User.id == user_id)).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없어요")
 
     today = datetime.utcnow().strftime("%Y-%m-%d")
     yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
