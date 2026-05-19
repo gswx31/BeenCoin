@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
     ALLOWED_ORIGINS: List[str] = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 14
     BINANCE_API_URL: str = "https://api.binance.com/api/v3"
     BINANCE_API_KEY: Optional[str] = os.getenv("BINANCE_API_KEY")
     BINANCE_API_SECRET: Optional[str] = os.getenv("BINANCE_API_SECRET")

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import api from '../api';
 
 const navItems = [
   { path: '/dashboard', label: '홈' },
@@ -45,7 +46,13 @@ const Navbar = () => {
             <span className="hidden sm:inline-flex items-center px-3 py-1 rounded-full text-[10px] font-semibold bg-mint/10 text-mint border border-mint/20">
               모의투자
             </span>
-            <button onClick={() => { localStorage.removeItem('token'); navigate('/login'); }}
+            <button onClick={async () => {
+              const rt = localStorage.getItem('refresh_token');
+              if (rt) { try { await api.post('/auth/logout', { refresh_token: rt }); } catch {} }
+              localStorage.removeItem('token');
+              localStorage.removeItem('refresh_token');
+              navigate('/login');
+            }}
               className="text-muted hover:text-loss text-sm transition-colors hidden lg:block">
               로그아웃
             </button>
@@ -69,7 +76,13 @@ const Navbar = () => {
                   location.pathname === item.path ? 'bg-dark-700 text-accent' : 'text-muted hover:text-white hover:bg-dark-700'
                 }`}>{item.label}</Link>
             ))}
-            <button onClick={() => { localStorage.removeItem('token'); navigate('/login'); }}
+            <button onClick={async () => {
+              const rt = localStorage.getItem('refresh_token');
+              if (rt) { try { await api.post('/auth/logout', { refresh_token: rt }); } catch {} }
+              localStorage.removeItem('token');
+              localStorage.removeItem('refresh_token');
+              navigate('/login');
+            }}
               className="block w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium text-loss hover:bg-dark-700">로그아웃</button>
           </div>
         </div>

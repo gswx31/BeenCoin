@@ -16,7 +16,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import './index.css';
 
 function GuestRoute({ children }) {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('token') || localStorage.getItem('refresh_token');
   return token ? <Navigate to="/dashboard" /> : children;
 }
 

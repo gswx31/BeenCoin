@@ -15,6 +15,9 @@ const Login = () => {
     try {
       const { data } = await api.post('/auth/login', { username, password });
       localStorage.setItem('token', data.access_token);
+      if (data.refresh_token) {
+        localStorage.setItem('refresh_token', data.refresh_token);
+      }
       toast.success('다시 만나서 반가워요! 🎉');
       navigate('/dashboard');
     } catch (error) {
