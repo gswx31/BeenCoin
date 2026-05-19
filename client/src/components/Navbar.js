@@ -6,10 +6,13 @@ const navItems = [
   { path: '/dashboard', label: '홈' },
   { path: '/order', label: '거래' },
   { path: '/portfolio', label: '내 자산' },
+  { path: '/feed', label: '피드' },
+  { path: '/leaderboard', label: '랭킹' },
+  { path: '/hall-of-fame', label: '명예의전당' },
+  { path: '/achievements', label: '업적' },
+  { path: '/referral', label: '친구초대' },
   { path: '/analytics', label: '분석' },
   { path: '/backtest', label: '백테스트' },
-  { path: '/leaderboard', label: '랭킹' },
-  { path: '/achievements', label: '업적' },
   { path: '/history', label: '내역' },
 ];
 

@@ -52,6 +52,19 @@ def register(request: Request, user: UserCreate, session: Session = Depends(get_
     if not session.exec(select(TradingAccount).where(TradingAccount.user_id == db_user.id)).first():
         session.add(TradingAccount(user_id=db_user.id, balance=Decimal(str(settings.INITIAL_BALANCE))))
         session.commit()
+
+    # 추천 코드 자동 발급
+    from app.services.referral_service import assign_referral_code_if_missing
+    assign_referral_code_if_missing(session, db_user)
+
+    # 회원가입 시 추천 코드 사용 (선택)
+    if getattr(user, 'referral_code', None):
+        try:
+            from app.services.referral_service import apply_referral
+            apply_referral(session, db_user.id, user.referral_code)
+        except Exception:
+            pass  # 잘못된 코드는 무시 (가입 자체는 성공)
+
     return UserOut(id=db_user.id, username=db_user.username, created_at=str(db_user.created_at))
 
 

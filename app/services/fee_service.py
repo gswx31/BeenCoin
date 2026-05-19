@@ -44,7 +44,20 @@ def calculate_fee(
         discount = Decimal(str(settings.BNB_FEE_DISCOUNT))
         fee = fee * (Decimal('1') - discount)
         is_bnb_discount = True
-        fee_asset = "USDT(BNB)"  # Marks BNB discount was applied
+        fee_asset = "USDT(BNB)"
+
+    # 티어 수수료 할인 추가
+    try:
+        from app.services.tier_service import get_user_tier
+        from sqlmodel import Session
+        from app.core.database import engine
+        with Session(engine) as s:
+            tier_data = get_user_tier(s, account.user_id)
+            tier_discount = Decimal(str(tier_data["tier"]["fee_discount"])) / Decimal('100')
+            if tier_discount > 0:
+                fee = fee * (Decimal('1') - tier_discount)
+    except Exception:
+        pass
 
     fee = fee.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
     return fee, fee_rate, fee_asset, is_bnb_discount

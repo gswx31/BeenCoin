@@ -13,7 +13,14 @@ class User(SQLModel, table=True):
     # Streak
     current_streak: int = Field(default=0)
     best_streak: int = Field(default=0)
-    last_profit_date: Optional[str] = Field(default=None)  # "YYYY-MM-DD"
+    last_profit_date: Optional[str] = Field(default=None)
+    # 출석 체크
+    checkin_streak: int = Field(default=0)
+    last_checkin_date: Optional[str] = Field(default=None)
+    # 추천 코드
+    referral_code: Optional[str] = Field(default=None, unique=True, index=True)
+    referred_by_user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    referral_count: int = Field(default=0)
     # Relationships
     accounts: List["TradingAccount"] = Relationship(back_populates="user")
     orders: List["Order"] = Relationship(back_populates="user")
@@ -128,6 +135,46 @@ class UserMission(SQLModel, table=True):
     reward_claimed: bool = Field(default=False)
     reward_amount: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=2)
     user: User = Relationship(back_populates="missions")
+
+
+class DailyCheckIn(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    checkin_date: str = Field(index=True)  # YYYY-MM-DD
+    streak_day: int  # 연속 출석 N일차
+    reward_amount: Decimal = Field(max_digits=20, decimal_places=2)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Season(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str  # "Season 1", "2026 Week 5"
+    start_date: datetime
+    end_date: datetime
+    is_active: bool = Field(default=True, index=True)
+
+
+class SeasonRanking(SQLModel, table=True):
+    """시즌 종료 시 명예의 전당 스냅샷."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    season_id: int = Field(foreign_key="season.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    username: str
+    rank: int
+    return_pct: Decimal = Field(max_digits=10, decimal_places=2)
+    total_profit: Decimal = Field(max_digits=20, decimal_places=2)
+    trade_count: int
+
+
+class ActivityFeed(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    username: str  # denormalized for fast read
+    activity_type: str  # TRADE / ACHIEVEMENT / TIER_UP / BIG_WIN
+    symbol: Optional[str] = None
+    message: str  # "민수님이 BTC 0.1개를 매수했어요"
+    metadata_json: str = Field(default="{}")  # 부가 정보 JSON
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 def create_db_and_tables():

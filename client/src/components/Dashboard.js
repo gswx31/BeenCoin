@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { formatUSD, formatPercent, toNum, signedFormat } from '../utils';
 import TradingChart from './TradingChart';
+import TierBadge from './TierBadge';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
 
@@ -56,6 +57,10 @@ const Dashboard = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="mb-6">
+        <TierBadge />
+      </div>
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <StatCard icon="💰" label="사용 가능 잔고" value={formatUSD(account.balance)} />
         <StatCard icon={profit >= 0 ? "📈" : "📉"} label="총 손익"

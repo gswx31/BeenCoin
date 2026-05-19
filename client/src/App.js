@@ -10,6 +10,9 @@ import Analytics from './components/Analytics';
 import Leaderboard from './components/Leaderboard';
 import Achievements from './components/Achievements';
 import Backtest from './components/Backtest';
+import Feed from './components/Feed';
+import HallOfFame from './components/HallOfFame';
+import Referral from './components/Referral';
 import Layout from './components/Layout';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -36,6 +39,9 @@ function App() {
             <Route path="/leaderboard" element={<Leaderboard />} />
             <Route path="/achievements" element={<Achievements />} />
             <Route path="/backtest" element={<Backtest />} />
+            <Route path="/feed" element={<Feed />} />
+            <Route path="/hall-of-fame" element={<HallOfFame />} />
+            <Route path="/referral" element={<Referral />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" />} />
         </Routes>

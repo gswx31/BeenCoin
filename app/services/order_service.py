@@ -186,11 +186,12 @@ def _apply_fill(
 
 
 def _run_post_trade_hooks(session: Session, order: Order, notional: Decimal, realized_pnl: Decimal):
-    """Run streak/achievement/mission updates. Errors here don't break the trade."""
+    """Run streak/achievement/mission/feed updates."""
     try:
         from app.services.analytics_service import update_streak
         from app.services.achievement_service import check_and_award
         from app.services.mission_service import progress_missions
+        from app.services.feed_service import emit_trade
 
         if order.side == 'SELL':
             update_streak(session, order.user_id, realized_pnl)
@@ -206,6 +207,10 @@ def _run_post_trade_hooks(session: Session, order: Order, notional: Decimal, rea
             trade_notional=float(notional), realized_pnl=float(realized_pnl),
             order_type=order.order_type,
         )
+
+        # 활동 피드
+        emit_trade(session, order.user_id, order.symbol, order.side,
+                   order.filled_quantity, order.filled_price or Decimal('0'), float(notional))
     except Exception as e:
         print(f"[PostTrade] Hook error: {e}")
 

@@ -11,7 +11,7 @@ from app.core.rate_limit import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from app.models.database import create_db_and_tables
-from app.routers import auth, orders, account, websocket, alerts, analytics, leaderboard, achievements, market, backtest
+from app.routers import auth, orders, account, websocket, alerts, analytics, leaderboard, achievements, market, backtest, engagement
 from app.services.binance_service import close_client
 from app.services.price_engine import price_engine
 from contextlib import asynccontextmanager
@@ -84,6 +84,7 @@ app.include_router(leaderboard.router, prefix=settings.API_V1_STR)
 app.include_router(achievements.router, prefix=settings.API_V1_STR)
 app.include_router(market.router, prefix=settings.API_V1_STR)
 app.include_router(backtest.router, prefix=settings.API_V1_STR)
+app.include_router(engagement.router, prefix=settings.API_V1_STR)
 app.include_router(websocket.router, prefix=settings.API_V1_STR)
 
 static_dir = os.path.join(os.path.dirname(__file__), "..", "client", "build")
