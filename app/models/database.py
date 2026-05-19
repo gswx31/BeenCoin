@@ -82,6 +82,16 @@ class TransactionHistory(SQLModel, table=True):
     user: User = Relationship(back_populates="transactions")
 
 
+class RefreshToken(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    token_hash: str = Field(unique=True, index=True)
+    expires_at: datetime
+    revoked: bool = Field(default=False, index=True)
+    rotated_to: Optional[int] = Field(default=None)  # 새 토큰 ID (rotation 추적)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PriceAlert(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)

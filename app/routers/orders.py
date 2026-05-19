@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 from app.schemas.order import OrderCreate, OrderOut
 from app.services.order_service import create_order, get_user_orders, cancel_order
 from app.core.database import get_session
+from app.core.rate_limit import limiter
 from fastapi.security import OAuth2PasswordBearer
 from typing import List
 from app.utils.security import decode_access_token
@@ -39,7 +40,9 @@ def _order_to_out(o) -> OrderOut:
 
 
 @router.post("", response_model=OrderOut)
+@limiter.limit("60/minute")
 async def place_order(
+    request: Request,
     order: OrderCreate,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),

@@ -9,6 +9,7 @@ import History from './components/History';
 import Analytics from './components/Analytics';
 import Leaderboard from './components/Leaderboard';
 import Achievements from './components/Achievements';
+import Backtest from './components/Backtest';
 import Layout from './components/Layout';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -34,6 +35,7 @@ function App() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/leaderboard" element={<Leaderboard />} />
             <Route path="/achievements" element={<Achievements />} />
+            <Route path="/backtest" element={<Backtest />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" />} />
         </Routes>

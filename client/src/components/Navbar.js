@@ -6,6 +6,7 @@ const navItems = [
   { path: '/order', label: '거래' },
   { path: '/portfolio', label: '내 자산' },
   { path: '/analytics', label: '분석' },
+  { path: '/backtest', label: '백테스트' },
   { path: '/leaderboard', label: '랭킹' },
   { path: '/achievements', label: '업적' },
   { path: '/history', label: '내역' },
