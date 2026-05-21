@@ -3,6 +3,7 @@ import api from '../api';
 import { formatUSD, formatPercent, toNum, signedFormat } from '../utils';
 import TradingChart from './TradingChart';
 import TierBadge from './TierBadge';
+import BankruptcyModal from './BankruptcyModal';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
 
@@ -24,6 +25,7 @@ const Dashboard = () => {
   const [currentPrice, setCurrentPrice] = useState(null);
   const [selectedSymbol, setSelectedSymbol] = useState('BTCUSDT');
   const [recentOrders, setRecentOrders] = useState([]);
+  const [bankruptcyOpen, setBankruptcyOpen] = useState(false);
   const navigate = useNavigate();
 
   const fetchData = useCallback(async () => {
@@ -90,6 +92,23 @@ const Dashboard = () => {
         <StatCard icon="🏦" label="총 자산"
           value={formatUSD(account.total_value)} sub={`${positions.length}개 포지션 보유중`} />
       </div>
+
+      {/* 잔고 위험 안내 */}
+      {toNum(account.total_value) < 20000 && (
+        <div className="bg-loss/10 border border-loss/30 rounded-2xl p-4 mb-6 fade-in flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <p className="text-loss text-sm font-bold">자산이 위험 수준이에요</p>
+              <p className="text-muted text-xs">총 자산이 ${formatUSD(account.total_value)}밖에 안 남았어요. 파산 신청으로 다시 시작할 수 있어요.</p>
+            </div>
+          </div>
+          <button onClick={() => setBankruptcyOpen(true)}
+            className="px-4 py-2 bg-loss text-white text-xs font-bold rounded-xl hover:bg-loss/90">
+            🆘 파산 신청
+          </button>
+        </div>
+      )}
 
       <div className="bg-dark-800 rounded-2xl border border-dark-600 p-5 mb-6 fade-in">
         <div className="flex items-center justify-between mb-3">
@@ -184,6 +203,8 @@ const Dashboard = () => {
           )}
         </div>
       </div>
+
+      <BankruptcyModal open={bankruptcyOpen} onClose={() => setBankruptcyOpen(false)} onSuccess={fetchData} />
     </div>
   );
 };

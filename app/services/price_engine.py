@@ -91,6 +91,7 @@ class PriceEngine:
                         if tick_count % 5 == 0:
                             await self._check_orders(symbol, price)
                             await self._check_price_alerts(symbol, price)
+                            await self._check_liquidations(symbol, price)
 
             except asyncio.CancelledError:
                 break
@@ -203,6 +204,15 @@ class PriceEngine:
         from app.services.order_service import _apply_fill
         _apply_fill(session, fresh_order, account, qty, fill_price, fee, fee_asset, is_maker)
         session.commit()
+
+    async def _check_liquidations(self, symbol: str, current_price: Decimal):
+        """선물 포지션 청산 체크."""
+        try:
+            with Session(engine) as session:
+                from app.services.futures_service import check_liquidations
+                check_liquidations(session, symbol, current_price)
+        except Exception as e:
+            print(f"[PriceEngine] Liquidation check error: {e}")
 
     async def _check_price_alerts(self, symbol: str, current_price: Decimal):
         with Session(engine) as session:

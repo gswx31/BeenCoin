@@ -13,6 +13,7 @@ import Backtest from './components/Backtest';
 import Feed from './components/Feed';
 import HallOfFame from './components/HallOfFame';
 import Referral from './components/Referral';
+import Futures from './components/Futures';
 import Layout from './components/Layout';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -42,6 +43,7 @@ function App() {
             <Route path="/feed" element={<Feed />} />
             <Route path="/hall-of-fame" element={<HallOfFame />} />
             <Route path="/referral" element={<Referral />} />
+            <Route path="/futures" element={<Futures />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" />} />
         </Routes>

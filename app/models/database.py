@@ -21,6 +21,9 @@ class User(SQLModel, table=True):
     referral_code: Optional[str] = Field(default=None, unique=True, index=True)
     referred_by_user_id: Optional[int] = Field(default=None, foreign_key="user.id")
     referral_count: int = Field(default=0)
+    # 파산
+    bankruptcy_count: int = Field(default=0)
+    last_bankruptcy_date: Optional[str] = Field(default=None)
     # Relationships
     accounts: List["TradingAccount"] = Relationship(back_populates="user")
     orders: List["Order"] = Relationship(back_populates="user")
@@ -175,6 +178,25 @@ class ActivityFeed(SQLModel, table=True):
     message: str  # "민수님이 BTC 0.1개를 매수했어요"
     metadata_json: str = Field(default="{}")  # 부가 정보 JSON
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class FuturesPosition(SQLModel, table=True):
+    """선물 포지션 — 양방향(Long/Short) + 레버리지."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    symbol: str = Field(index=True)
+    side: str  # LONG / SHORT
+    entry_price: Decimal = Field(max_digits=20, decimal_places=8)
+    quantity: Decimal = Field(max_digits=20, decimal_places=8)  # 코인 수량
+    leverage: int  # 1~50
+    margin: Decimal = Field(max_digits=20, decimal_places=8)  # 증거금 (USDT)
+    liquidation_price: Decimal = Field(max_digits=20, decimal_places=8)
+    is_open: bool = Field(default=True, index=True)
+    opened_at: datetime = Field(default_factory=datetime.utcnow)
+    closed_at: Optional[datetime] = Field(default=None)
+    close_price: Optional[Decimal] = Field(default=None, max_digits=20, decimal_places=8)
+    realized_pnl: Decimal = Field(default=Decimal('0'), max_digits=20, decimal_places=8)
+    is_liquidated: bool = Field(default=False)
 
 
 def create_db_and_tables():

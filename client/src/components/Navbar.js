@@ -5,6 +5,7 @@ import api from '../api';
 const navItems = [
   { path: '/dashboard', label: '홈' },
   { path: '/order', label: '거래' },
+  { path: '/futures', label: '선물' },
   { path: '/portfolio', label: '내 자산' },
   { path: '/feed', label: '피드' },
   { path: '/leaderboard', label: '랭킹' },
